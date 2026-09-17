@@ -7,7 +7,8 @@ import ImagePanel from './components/ImagePanel';
 import SettingsDrawer from './components/SettingsDrawer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Send, Image as ImageIcon, Edit3 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy } from 'lucide-react';
 import type { Conversation, Message, ImageAsset, AppSettings } from './lib/types';
 
 export default function GrokStudio() {
@@ -16,8 +17,11 @@ export default function GrokStudio() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [images, setImages] = useState<ImageAsset[]>([]);
   const [currentImage, setCurrentImage] = useState<ImageAsset | null>(null);
+  const [previewImage, setPreviewImage] = useState<ImageAsset | null>(null);
+  const [previewIndex, setPreviewIndex] = useState(0);
 
   const [input, setInput] = useState('');
+  const [selectedAspect, setSelectedAspect] = useState('1:1');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [settings, setSettings] = useState<AppSettings>({
@@ -194,8 +198,8 @@ export default function GrokStudio() {
         body: JSON.stringify({
           prompt,
           conversation_id: currentConvId,
-          aspect_ratio: settings.default_aspect_ratio,
-          resolution: settings.default_resolution,
+          aspect_ratio: selectedAspect,
+          resolution: settings.default_resolution || '1k',
           n: settings.default_n,
         }),
       });
@@ -242,8 +246,8 @@ export default function GrokStudio() {
           prompt: editPrompt,
           image_id: source.id,
           conversation_id: currentConvId,
-          aspect_ratio: settings.default_aspect_ratio,
-          resolution: settings.default_resolution,
+          aspect_ratio: selectedAspect,
+          resolution: settings.default_resolution || '1k',
         }),
       });
       const data = await res.json();
@@ -317,6 +321,23 @@ export default function GrokStudio() {
     setCurrentImage(img);
   };
 
+  const handlePreview = (img: ImageAsset) => {
+    const index = images.findIndex(i => i.id === img.id);
+    setPreviewIndex(index);
+    setPreviewImage(img);
+  };
+
+  const closePreview = () => {
+    setPreviewImage(null);
+  };
+
+  const changePreview = (direction: number) => {
+    if (images.length === 0) return;
+    const newIndex = (previewIndex + direction + images.length) % images.length;
+    setPreviewIndex(newIndex);
+    setPreviewImage(images[newIndex]);
+  };
+
   const handleEditFromPanel = (img: ImageAsset) => {
     const editPrompt = prompt('输入修改说明（例如：把背景换成雨夜东京）:');
     if (editPrompt) {
@@ -358,6 +379,25 @@ export default function GrokStudio() {
         </div>
 
         <div className="border-t border-zinc-800 p-4 bg-zinc-950">
+          {/* 比例快速选择器 */}
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <div className="text-xs text-zinc-500 mr-1">比例：</div>
+            {['1:1', '16:9', '9:16', '4:3', '3:4'].map(ratio => (
+              <button
+                key={ratio}
+                onClick={() => setSelectedAspect(ratio)}
+                className={`px-3 py-0.5 text-xs rounded-full border transition ${
+                  selectedAspect === ratio 
+                    ? 'bg-blue-600 border-blue-600 text-white' 
+                    : 'border-zinc-700 hover:bg-zinc-800 text-zinc-400'
+                }`}
+              >
+                {ratio}
+              </button>
+            ))}
+            <div className="text-[10px] text-zinc-500 ml-2">· 默认 1k（节省额度）</div>
+          </div>
+
           <div className="flex gap-2">
             <div className="flex-1 relative">
               <Input
@@ -420,8 +460,73 @@ export default function GrokStudio() {
         onSelectImage={handleSelectImage}
         onEditImage={handleEditFromPanel}
         onUpload={handleUpload}
+        onPreview={handlePreview}
         conversationId={currentConvId}
       />
+
+      {/* 大图预览 Dialog */}
+      <Dialog open={!!previewImage} onOpenChange={(open) => !open && closePreview()}>
+        <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 bg-zinc-950 border-zinc-800">
+          {previewImage && (
+            <div className="flex flex-col h-[90vh]">
+              {/* 顶部工具栏 */}
+              <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+                <div className="text-sm text-zinc-400">
+                  {previewIndex + 1} / {images.length}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => changePreview(-1)} disabled={images.length <= 1}>
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => changePreview(1)} disabled={images.length <= 1}>
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => {
+                    const fullUrl = `/api/files/${previewImage.file_path}`;
+                    const a = document.createElement('a');
+                    a.href = fullUrl;
+                    a.download = `${previewImage.prompt.slice(0,30)}.png`;
+                    a.click();
+                  }}>
+                    <Download className="w-4 h-4 mr-1" /> 下载
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(previewImage.prompt)}>
+                    <Copy className="w-4 h-4 mr-1" /> 复制 Prompt
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={closePreview}>
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* 大图区域 */}
+              <div className="flex-1 flex items-center justify-center bg-black p-4 overflow-auto">
+                <img 
+                  src={`/api/files/${previewImage.file_path}`} 
+                  alt={previewImage.prompt}
+                  className="max-w-full max-h-full object-contain"
+                />
+              </div>
+
+              {/* 底部信息 */}
+              <div className="p-4 border-t border-zinc-800 bg-zinc-950 text-sm">
+                <div className="line-clamp-3 text-zinc-300 mb-3">{previewImage.prompt}</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1 text-xs text-zinc-500">
+                  <div>模型：{previewImage.model}</div>
+                  <div>比例：{previewImage.aspect_ratio}</div>
+                  <div>分辨率：{previewImage.resolution}</div>
+                  <div>尺寸：{previewImage.width} × {previewImage.height}</div>
+                  <div>类型：{previewImage.kind}</div>
+                  <div>时间：{new Date(previewImage.created_at).toLocaleString()}</div>
+                </div>
+                {previewImage.parent_image_id && (
+                  <div className="mt-2 text-emerald-400 text-xs">此图由另一张图片编辑而来</div>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
