@@ -115,25 +115,38 @@ describe('Chat DB helpers for send/stream/error/summary paths', () => {
 });
 
 describe('ErrorBoundary (prevents white screen on render error)', () => {
-  it('getDerivedStateFromError + render shows fallback without crashing on thrown error', async () => {
-    // Directly exercise shipped ErrorBoundary class (real path, dynamic import for ESM)
+  it('real React createRoot/render of ErrorBoundary + throwing child shows fallback without crashing (app/layout context)', async () => {
+    // Drive the SHIPPED ErrorBoundary via real React render (createRoot from react-dom/client)
     const mod = await import('../components/ErrorBoundary');
-    const ErrorBoundary = mod.default;
-    // Real React element creation (triggers the render path the boundary uses in app)
-    const boundaryInstance = new ErrorBoundary({ children: React.createElement('div', {}, 'child') });
-    const testError = new Error('test render crash in app context');
-    const newState = ErrorBoundary.getDerivedStateFromError(testError);
-    expect(newState.hasError).toBe(true);
-    expect(newState.error?.message).toContain('test render crash');
+    const ErrorBoundary = mod.default as React.ComponentType<{ children?: React.ReactNode }>;
+    const { createRoot } = await import('react-dom/client');
 
-    // Render the boundary after error state (simulates React invoking the boundary's render)
-    boundaryInstance.state = newState;
-    const rendered: React.ReactNode = boundaryInstance.render();
-    expect(rendered).toBeTruthy();
-    // Safe no-crash observation: render() succeeded and produced a React element (the fallback UI)
-    // (content check avoided due to nested React element structure; the shipped fallback is verified by source)
-    if (rendered && typeof rendered === 'object' && rendered !== null) {
-      expect((rendered as any).type).toBeTruthy(); // confirms element shape from ErrorBoundary.render
-    }
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const ThrowingChild = () => {
+      throw new Error('simulated render crash in layout children');
+    };
+
+    // Render real tree: ErrorBoundary wrapping a child that throws — this is the real trigger path
+    root.render(
+      React.createElement(
+        ErrorBoundary,
+        null,
+        React.createElement(ThrowingChild)
+      )
+    );
+
+    // Allow React to flush the error boundary catch + fallback render (real path, no white screen)
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Observation: no crash (test continues), fallback UI from shipped component is in DOM
+    expect(container.innerHTML).toContain('页面出错了');
+    expect(container.innerHTML).toContain('请刷新页面重试');
+
+    // Cleanup (real render lifecycle)
+    root.unmount();
+    document.body.removeChild(container);
   });
 });
