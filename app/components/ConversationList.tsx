@@ -52,7 +52,8 @@ export default function ConversationList({ conversations, currentId, onSelect, o
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    onDelete(id);
+    setDeleting(id);
+    await onDelete(id);
     toast({ title: '会话已删除', variant: 'default' });
     setDeleting(null);
   };
