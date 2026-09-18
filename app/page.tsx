@@ -20,6 +20,7 @@ export default function GrokStudio() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConvId, setCurrentConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [messageDisplayLimit, setMessageDisplayLimit] = useState(20);
   const [images, setImages] = useState<ImageAsset[]>([]);
   const [currentImage, setCurrentImage] = useState<ImageAsset | null>(null);
   const [previewImage, setPreviewImage] = useState<ImageAsset | null>(null);
@@ -86,6 +87,7 @@ export default function GrokStudio() {
     const res = await fetch(`/api/conversations/${convId}/messages`);
     const data = await res.json();
     setMessages(data);
+    setMessageDisplayLimit(20); // 默认只显示最近20条，避免长对话卡顿
     scrollToBottom();
   }
 
@@ -645,6 +647,19 @@ export default function GrokStudio() {
                 手动摘要
               </Button>
             )}
+            {currentConvId && (() => {
+              const conv = conversations.find(c => c.id === currentConvId);
+              return conv?.summary ? (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-9 px-3 text-xs md:h-7 md:px-2 md:text-xs text-amber-400 hover:text-amber-300"
+                  onClick={() => toast({ title: '当前记忆摘要', description: conv.summary, variant: 'default' })}
+                >
+                  查看记忆
+                </Button>
+              ) : null;
+            })()}
             <SettingsDrawer settings={settings} onSave={saveSettings} onTest={testConnection} />
             
             {/* Mobile: Open Images Dialog */}
@@ -681,9 +696,20 @@ export default function GrokStudio() {
             {currentConvId && messages.length === 0 && (
               <div className="text-center text-zinc-500 mt-12">开始聊天或点击「生成图片」</div>
             )}
-            {messages.map((m, idx) => (
+
+            {/* 性能优化：默认只渲染最近20条，解决长对话卡顿 + 移动端新消息抖动 */}
+            {messages.length > 20 && messageDisplayLimit < messages.length && (
+              <button
+                onClick={() => setMessageDisplayLimit(Math.min(messages.length, messageDisplayLimit + 20))}
+                className="mx-auto mb-2 block text-xs px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded text-zinc-400"
+              >
+                加载更早的 {Math.min(20, messages.length - messageDisplayLimit)} 条消息
+              </button>
+            )}
+
+            {messages.slice(-messageDisplayLimit).map((m) => (
               <MessageItem 
-                key={idx} 
+                key={m.id} 
                 message={m} 
                 onRetry={retryMessage} 
                 onDelete={deleteMessage} 

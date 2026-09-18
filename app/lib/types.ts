@@ -4,6 +4,8 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   last_message_at: string;
+  summary?: string;
+  summary_updated_at?: string;
 }
 
 export interface Message {
@@ -12,6 +14,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   created_at: string;
+  status?: 'pending' | 'completed' | 'error';
+  error_message?: string | null;
   extra_json?: Record<string, any> | null;
 }
 
@@ -35,6 +39,8 @@ export interface ImageAsset {
   height: number;
   sha256: string;
   created_at: string;
+  status?: 'pending' | 'completed' | 'error';
+  error_message?: string | null;
 }
 
 export interface AppSettings {
@@ -45,5 +51,8 @@ export interface AppSettings {
   default_aspect_ratio: string;
   default_resolution: string;
   default_n: string;
-  edit_compatibility_mode: string; // 'json' | 'generations' | 'error'
+  edit_compatibility_mode: string;
+  summary_prompt?: string;
+  temperature?: string;
+  max_tokens?: string;
 }
