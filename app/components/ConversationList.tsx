@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Plus, Trash2, Edit2, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/toast';
 
 interface Conversation {
   id: string;
@@ -23,6 +24,12 @@ export default function ConversationList({ conversations, currentId, onSelect, o
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
+  const { toast } = useToast();
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredConversations = conversations.filter(c =>
+    c.title.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   const startRename = (conv: Conversation, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -45,9 +52,8 @@ export default function ConversationList({ conversations, currentId, onSelect, o
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('删除会话？')) return;
-    setDeleting(id);
-    await onDelete(id);
+    onDelete(id);
+    toast({ title: '会话已删除', variant: 'default' });
     setDeleting(null);
   };
 
@@ -60,11 +66,23 @@ export default function ConversationList({ conversations, currentId, onSelect, o
         </Button>
       </div>
 
+      <div className="p-2 border-b border-zinc-800">
+        <input
+          type="text"
+          placeholder="搜索会话..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1 text-sm focus:outline-none focus:border-blue-600"
+        />
+      </div>
+
       <div className="flex-1 overflow-auto p-2 chat-container">
-        {conversations.length === 0 && (
-          <div className="text-center text-sm text-zinc-500 py-8">暂无会话</div>
+        {filteredConversations.length === 0 && (
+          <div className="text-center text-sm text-zinc-500 py-8">
+            {searchTerm ? '无匹配会话' : '暂无会话'}
+          </div>
         )}
-        {conversations.map((c) => (
+        {filteredConversations.map((c) => (
           <div
             key={c.id}
             onClick={() => onSelect(c.id)}

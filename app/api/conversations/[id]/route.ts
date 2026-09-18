@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getConversation, deleteConversation, updateConversation } from '@/app/lib/db';
+import { getConversation, deleteConversation, updateConversation, updateConversationSummary } from '@/app/lib/db';
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -10,9 +10,14 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { title } = await req.json();
-  if (!title) return NextResponse.json({ error: 'title required' }, { status: 400 });
-  updateConversation(id, { title });
+  const body = await req.json();
+  if (body.summary) {
+    updateConversationSummary(id, body.summary);
+  } else if (body.title) {
+    updateConversation(id, { title: body.title });
+  } else {
+    return NextResponse.json({ error: 'title or summary required' }, { status: 400 });
+  }
   return NextResponse.json({ ok: true });
 }
 
