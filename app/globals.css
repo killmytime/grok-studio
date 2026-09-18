@@ -129,6 +129,23 @@
   border-radius: 12px;
   line-height: 1.5;
   font-size: 15px;
+  contain: layout; /* 减少流式渲染时的布局抖动 */
+}
+
+/* 移动端操作按钮优化：默认隐藏，点击消息后显示 */
+.message-bubble .message-actions {
+  display: none;
+}
+
+.message-bubble.active .message-actions,
+.message-bubble:hover .message-actions {
+  display: flex;
+}
+
+@media (max-width: 768px) {
+  .message-bubble .message-actions {
+    opacity: 0.6;
+  }
 }
 
 .message-user {
@@ -224,4 +241,51 @@
   html {
     @apply font-sans;
   }
+}
+
+/* Markdown + KaTeX + Code highlight styles for usable chat rendering */
+@import "katex/dist/katex.min.css";
+
+.prose pre {
+  background-color: #111113;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  background-color: #27272a;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.prose pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.prose th, .prose td {
+  border: 1px solid #27272a;
+  padding: 0.5rem;
+}
+
+.prose blockquote {
+  border-left: 3px solid #3b82f6;
+  padding-left: 1rem;
+  color: #a1a1aa;
+}
+
+.katex {
+  font-size: 1.05em;
 }

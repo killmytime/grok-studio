@@ -10,12 +10,41 @@ interface Props {
   onSetCurrent?: (img: ImageAsset) => void;
   onRegen?: (img: ImageAsset) => void;
   onPreview?: (img: ImageAsset) => void;
+  onRetry?: (img: ImageAsset) => void;
   compact?: boolean;
 }
 
-export default function ImageCard({ image, onEdit, onSetCurrent, onRegen, onPreview, compact }: Props) {
+export default function ImageCard({ image, onEdit, onSetCurrent, onRegen, onPreview, onRetry, compact }: Props) {
   const thumbUrl = `/api/files/${image.thumb_path}`;
   const fullUrl = `/api/files/${image.file_path}`;
+  const isError = image.status === 'error';
+
+  const copyPrompt = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(image.prompt);
+  };
+
+  if (isError) {
+    return (
+      <div className="image-card mb-3 border-red-800 bg-red-950/50">
+        <div className="p-3 text-xs">
+          <div className="text-red-400 font-medium mb-1">生成失败</div>
+          <div className="text-zinc-400 text-[10px] mb-2 line-clamp-2">{image.prompt}</div>
+          <div className="text-[10px] text-red-400 mb-2">{image.error_message}</div>
+          <div className="flex gap-1">
+            {onRetry && (
+              <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={(e) => { e.stopPropagation(); onRetry(image); }}>
+                重试
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={copyPrompt}>
+              复制 Prompt
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -23,11 +52,6 @@ export default function ImageCard({ image, onEdit, onSetCurrent, onRegen, onPrev
     a.href = fullUrl;
     a.download = `${image.prompt.slice(0, 30)}.${image.mime.split('/')[1] || 'png'}`;
     a.click();
-  };
-
-  const copyPrompt = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(image.prompt);
   };
 
   const handlePreview = (e: React.MouseEvent) => {
@@ -45,7 +69,7 @@ export default function ImageCard({ image, onEdit, onSetCurrent, onRegen, onPrev
             className="max-w-full max-h-[180px] object-contain" 
           />
         </div>
-        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+        <div className="absolute top-2 right-2 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
           <Button size="icon" variant="secondary" className="h-7 w-7 bg-black/60 hover:bg-black/80" onClick={handleDownload}>
             <Download className="w-3.5 h-3.5" />
           </Button>

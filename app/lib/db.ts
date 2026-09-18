@@ -37,7 +37,9 @@ function initSchema(db: Database.Database) {
       title TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      last_message_at TEXT NOT NULL
+      last_message_at TEXT NOT NULL,
+      summary TEXT,
+      summary_updated_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -47,6 +49,8 @@ function initSchema(db: Database.Database) {
       content TEXT NOT NULL,
       created_at TEXT NOT NULL,
       extra_json TEXT,
+      status TEXT DEFAULT 'completed',
+      error_message TEXT,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
 
@@ -70,6 +74,8 @@ function initSchema(db: Database.Database) {
       height INTEGER NOT NULL,
       sha256 TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      status TEXT DEFAULT 'completed',
+      error_message TEXT,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
       FOREIGN KEY (parent_image_id) REFERENCES images(id) ON DELETE SET NULL
     );
@@ -82,6 +88,33 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_images_conv ON images(conversation_id, created_at);
   `);
+
+  // Migration: add status columns if not exist (for existing DBs)
+  try {
+    const msgCols = db.prepare("PRAGMA table_info(messages)").all() as any[];
+    if (!msgCols.some(c => c.name === 'status')) {
+      db.exec("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'completed'");
+    }
+    if (!msgCols.some(c => c.name === 'error_message')) {
+      db.exec("ALTER TABLE messages ADD COLUMN error_message TEXT");
+    }
+    const imgCols = db.prepare("PRAGMA table_info(images)").all() as any[];
+    if (!imgCols.some(c => c.name === 'status')) {
+      db.exec("ALTER TABLE images ADD COLUMN status TEXT DEFAULT 'completed'");
+    }
+    if (!imgCols.some(c => c.name === 'error_message')) {
+      db.exec("ALTER TABLE images ADD COLUMN error_message TEXT");
+    }
+    const convCols = db.prepare("PRAGMA table_info(conversations)").all() as any[];
+    if (!convCols.some(c => c.name === 'summary')) {
+      db.exec("ALTER TABLE conversations ADD COLUMN summary TEXT");
+    }
+    if (!convCols.some(c => c.name === 'summary_updated_at')) {
+      db.exec("ALTER TABLE conversations ADD COLUMN summary_updated_at TEXT");
+    }
+  } catch (e) {
+    // ignore migration errors
+  }
 }
 
 // Conversations
@@ -125,19 +158,19 @@ export function deleteConversation(id: string) {
 }
 
 // Messages
-export function addMessage(convId: string, role: Message['role'], content: string, extra?: any) {
+export function addMessage(convId: string, role: Message['role'], content: string, extra?: any, status: Message['status'] = 'completed', errorMessage?: string | null) {
   const db = getDb();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const extraJson = extra ? JSON.stringify(extra) : null;
   db.prepare(`
-    INSERT INTO messages (id, conversation_id, role, content, created_at, extra_json)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, convId, role, content, now, extraJson);
+    INSERT INTO messages (id, conversation_id, role, content, created_at, extra_json, status, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, convId, role, content, now, extraJson, status || 'completed', errorMessage || null);
   // update last_message_at
   db.prepare(`UPDATE conversations SET last_message_at = ?, updated_at = ? WHERE id = ?`)
     .run(now, now, convId);
-  return { id, conversation_id: convId, role, content, created_at: now, extra_json: extra };
+  return { id, conversation_id: convId, role, content, created_at: now, extra_json: extra, status: status || 'completed', error_message: errorMessage || null };
 }
 
 export function listMessages(convId: string) {
@@ -152,7 +185,7 @@ export function listMessages(convId: string) {
 }
 
 // Images
-export function addImage(asset: Omit<ImageAsset, 'id' | 'created_at'>) {
+export function addImage(asset: Omit<ImageAsset, 'id' | 'created_at'> & { status?: 'pending' | 'completed' | 'error'; error_message?: string | null }) {
   const db = getDb();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -160,13 +193,14 @@ export function addImage(asset: Omit<ImageAsset, 'id' | 'created_at'>) {
     INSERT INTO images (
       id, conversation_id, message_id, kind, prompt, negative_prompt,
       model, aspect_ratio, resolution, quality, n_index, parent_image_id,
-      file_path, thumb_path, mime, width, height, sha256, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      file_path, thumb_path, mime, width, height, sha256, created_at, status, error_message
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     id, asset.conversation_id, asset.message_id, asset.kind, asset.prompt, asset.negative_prompt,
     asset.model, asset.aspect_ratio, asset.resolution, asset.quality, asset.n_index, asset.parent_image_id,
-    asset.file_path, asset.thumb_path, asset.mime, asset.width, asset.height, asset.sha256, now
+    asset.file_path, asset.thumb_path, asset.mime, asset.width, asset.height, asset.sha256, now,
+    asset.status || 'completed', asset.error_message || null
   );
   return { ...asset, id, created_at: now } as ImageAsset;
 }
@@ -203,4 +237,46 @@ export function getAllSettings(): Record<string, string> {
   const settings: Record<string, string> = {};
   rows.forEach(r => settings[r.key] = r.value);
   return settings;
+}
+
+export function updateMessageStatus(
+  messageId: string,
+  status: 'pending' | 'completed' | 'error',
+  content?: string,
+  errorMessage?: string
+) {
+  const db = getDb();
+  const fields: string[] = ['status = ?'];
+  const values: any[] = [status];
+
+  if (content !== undefined) {
+    fields.push('content = ?');
+    values.push(content);
+  }
+  if (errorMessage !== undefined) {
+    fields.push('error_message = ?');
+    values.push(errorMessage);
+  }
+
+  values.push(messageId);
+
+  db.prepare(`
+    UPDATE messages SET ${fields.join(', ')} WHERE id = ?
+  `).run(...values);
+}
+
+export function updateConversationSummary(convId: string, summary: string) {
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE conversations 
+    SET summary = ?, summary_updated_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(summary, now, now, convId);
+}
+
+export function getConversationSummary(convId: string): string | null {
+  const db = getDb();
+  const row = db.prepare(`SELECT summary FROM conversations WHERE id = ?`).get(convId) as any;
+  return row?.summary || null;
 }

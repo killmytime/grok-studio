@@ -14,9 +14,10 @@ interface Props {
   onUpload: (file: File) => Promise<void>;
   onPreview?: (img: ImageAsset) => void;
   conversationId: string | null;
+  onRetryImage?: (img: ImageAsset) => void;
 }
 
-export default function ImagePanel({ images, currentImage, onSelectImage, onEditImage, onUpload, onPreview, conversationId }: Props) {
+export default function ImagePanel({ images, currentImage, onSelectImage, onEditImage, onUpload, onPreview, conversationId, onRetryImage }: Props) {
   const [uploading, setUploading] = useState(false);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -62,6 +63,7 @@ export default function ImagePanel({ images, currentImage, onSelectImage, onEdit
               onEdit={onEditImage}
               onSetCurrent={onSelectImage}
               onPreview={onPreview}
+              onRetry={onRetryImage}
               compact={true}
             />
           </div>

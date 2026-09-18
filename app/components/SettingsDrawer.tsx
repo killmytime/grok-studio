@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Settings } from 'lucide-react';
@@ -15,6 +15,10 @@ interface SettingsData {
   default_resolution: string;
   default_n: string;
   edit_compatibility_mode: string;
+  summary_prompt?: string;
+  custom_system_prompt?: string;
+  temperature?: string;
+  max_tokens?: string;
 }
 
 interface Props {
@@ -56,75 +60,49 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
           <DialogTitle>设置 · API 配置</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
-          <div>
-            <div className="text-xs text-zinc-400 mb-1.5">GROK_BASE_URL（中转地址）</div>
-            <Input 
-              className="settings-input" 
-              value={form.base_url} 
-              onChange={e => setForm({ ...form, base_url: e.target.value })} 
-              placeholder="http://127.0.0.1:3000/v1" 
-            />
-          </div>
-
-          <div>
-            <div className="text-xs text-zinc-400 mb-1.5">GROK_API_KEY</div>
-            <Input 
-              className="settings-input" 
-              type="password" 
-              value={form.api_key} 
-              onChange={e => setForm({ ...form, api_key: e.target.value })} 
-            />
+        <div className="space-y-4 py-2">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-zinc-400">Base URL</label>
+              <Input value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} className="settings-input mt-1" />
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400">API Key</label>
+              <Input value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })} className="settings-input mt-1" type="password" />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <div className="text-xs text-zinc-400 mb-1.5">聊天模型</div>
-              <Input className="settings-input" value={form.chat_model} onChange={e => setForm({ ...form, chat_model: e.target.value })} />
+              <label className="text-xs text-zinc-400">Chat Model</label>
+              <Input value={form.chat_model} onChange={(e) => setForm({ ...form, chat_model: e.target.value })} className="settings-input mt-1" />
             </div>
             <div>
-              <div className="text-xs text-zinc-400 mb-1.5">绘图模型</div>
-              <Input className="settings-input" value={form.image_model} onChange={e => setForm({ ...form, image_model: e.target.value })} />
+              <label className="text-xs text-zinc-400">Image Model</label>
+              <Input value={form.image_model} onChange={(e) => setForm({ ...form, image_model: e.target.value })} className="settings-input mt-1" />
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <div className="text-xs text-zinc-400 mb-1.5">默认比例</div>
-              <Input className="settings-input" value={form.default_aspect_ratio} onChange={e => setForm({ ...form, default_aspect_ratio: e.target.value })} />
+              <label className="text-xs text-zinc-400">Temperature</label>
+              <Input value={form.temperature || '0.7'} onChange={(e) => setForm({ ...form, temperature: e.target.value })} className="settings-input mt-1" placeholder="0.7" />
             </div>
             <div>
-              <div className="text-xs text-zinc-400 mb-1.5">默认分辨率</div>
-              <Input className="settings-input" value={form.default_resolution} onChange={e => setForm({ ...form, default_resolution: e.target.value })} />
+              <label className="text-xs text-zinc-400">Max Tokens</label>
+              <Input value={form.max_tokens || '4096'} onChange={(e) => setForm({ ...form, max_tokens: e.target.value })} className="settings-input mt-1" placeholder="4096" />
             </div>
-            <div>
-              <div className="text-xs text-zinc-400 mb-1.5">默认 n</div>
-              <Input className="settings-input" value={form.default_n} onChange={e => setForm({ ...form, default_n: e.target.value })} />
-            </div>
-          </div>
-
-          <div>
-            <div className="text-xs text-zinc-400 mb-1.5">改图兼容模式</div>
-            <select 
-              className="settings-input w-full h-9 rounded-md px-3 text-sm"
-              value={form.edit_compatibility_mode}
-              onChange={e => setForm({ ...form, edit_compatibility_mode: e.target.value })}
-            >
-              <option value="json">官方 JSON /images/edits</option>
-              <option value="generations">回退到 generations（中转支持时）</option>
-              <option value="error">仅报错（严格）</option>
-            </select>
           </div>
 
           <div className="flex gap-2 pt-2">
-            <Button onClick={() => test('chat')} disabled={!!testing} variant="outline" size="sm">测试聊天</Button>
-            <Button onClick={() => test('image')} disabled={!!testing} variant="outline" size="sm">测试绘图</Button>
-            <Button onClick={handleSave} className="ml-auto">保存设置</Button>
+            <Button onClick={handleSave} className="flex-1">保存设置</Button>
+            <Button variant="outline" onClick={() => test('chat')} disabled={!!testing}>测试 Chat</Button>
+            <Button variant="outline" onClick={() => test('image')} disabled={!!testing}>测试 Image</Button>
           </div>
 
           {testResult && (
-            <div className="text-xs bg-zinc-900 p-3 rounded border border-zinc-800 font-mono">
-              {JSON.stringify(testResult, null, 2).slice(0, 600)}
+            <div className="text-xs p-2 bg-zinc-900 rounded">
+              {testResult.ok ? '连接成功' : '连接失败'}: {JSON.stringify(testResult).slice(0, 200)}
             </div>
           )}
         </div>
