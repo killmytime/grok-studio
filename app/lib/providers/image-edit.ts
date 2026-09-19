@@ -1,5 +1,6 @@
 import { imageToDataUri, saveImageFromBase64, saveImageFromUrl } from '../image';
 import { getImage, getSetting } from '../db';
+import { mergeImageMeta } from '../image-meta';
 import { bearerHeaders, resolveImageEditBackend, type CapabilityBackend } from '../backends';
 import { getIntegration, hasCapability } from '../integrations/catalog';
 import { normalizeB64, unpackImageItems } from './image-unpack';
@@ -33,6 +34,15 @@ export async function grokEdit(opts: {
   const aspect = opts.aspect_ratio || 'auto';
   const resolution = opts.resolution || '1k';
   const mode = getSetting('edit_compatibility_mode', 'json');
+  const started = Date.now();
+
+  const stamp = (images: ImageAsset[]) => images.map((img) => mergeImageMeta(img.id, {
+    provider: backend.provider || 'grok',
+    n,
+    elapsed_ms: Date.now() - started,
+    parent_image_id: opts.image_id,
+    edit_mode: mode,
+  }) || img);
 
   if (mode === 'json') {
     const body = {
@@ -82,7 +92,7 @@ export async function grokEdit(opts: {
       }
       if (asset) images.push(asset);
     }
-    return { images };
+    return { images: stamp(images) };
   }
 
   if (mode === 'generations') {
@@ -130,7 +140,7 @@ export async function grokEdit(opts: {
       }
       if (asset) images.push(asset);
     }
-    return { images, mode: 'generations' };
+    return { images: stamp(images), mode: 'generations' };
   }
 
   throw new ProviderError('Edit compatibility mode set to error only', 400);

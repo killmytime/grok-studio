@@ -1,13 +1,13 @@
 'use client';
 
 import { Message } from '@/app/lib/types';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeHighlight from 'rehype-highlight';
-import { Copy } from 'lucide-react';
+import { Copy, Volume2, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
@@ -17,14 +17,19 @@ interface Props {
   onRetry?: (messageId: string) => void;
   onDelete?: (messageId: string) => void;
   onEdit?: (messageId: string, newContent: string) => void;
+  canSpeak?: boolean;
+  onAudioReady?: (messageId: string, audioPath: string) => void;
 }
 
-export default function MessageItem({ message, onRetry, onDelete, onEdit }: Props) {
+export default function MessageItem({ message, onRetry, onDelete, onEdit, canSpeak, onAudioReady }: Props) {
   const isUser = message.role === 'user';
   const isError = message.status === 'error';
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
   const [isActive, setIsActive] = useState(false); // 移动端点击显示操作按钮
+  const [speaking, setSpeaking] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
 
   const handleSaveEdit = () => {
@@ -37,6 +42,52 @@ export default function MessageItem({ message, onRetry, onDelete, onEdit }: Prop
   const cancelEdit = () => {
     setEditValue(message.content);
     setIsEditing(false);
+  };
+
+  const stopSpeech = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    audioRef.current?.pause();
+    audioRef.current = null;
+    setSpeaking(false);
+  };
+
+  const speakMessage = async () => {
+    if (speaking) {
+      stopSpeech();
+      return;
+    }
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx: AudioContext | undefined = Ctx ? new Ctx() : undefined;
+    try {
+      setSpeaking(true);
+      if (ctx?.state === 'suspended') await ctx.resume();
+      const { playAudioResponse } = await import('@/app/lib/wav-stream-player');
+      const cached = message.extra_json?.audio_path as string | undefined;
+      const res = cached
+        ? await fetch(`/api/files/${cached}`, { signal: ac.signal })
+        : await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: message.content, message_id: message.id }),
+            signal: ac.signal,
+          });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `朗读失败 ${res.status}`);
+      }
+      const saved = res.headers.get('X-Audio-Path');
+      await playAudioResponse(res, { signal: ac.signal, ctx });
+      if (!cached && saved && !ac.signal.aborted) onAudioReady?.(message.id, saved);
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      toast({ title: '朗读失败', description: e.message, variant: 'error' });
+    } finally {
+      if (abortRef.current === ac) abortRef.current = null;
+      setSpeaking(false);
+    }
   };
 
   const copyToClipboard = async () => {
@@ -143,12 +194,31 @@ export default function MessageItem({ message, onRetry, onDelete, onEdit }: Prop
             {message.status === 'pending' && (
               <div className="text-[10px] opacity-60 mt-1">正在生成...</div>
             )}
+            {message.extra_json?.audio_path && (
+              <audio
+                className="mt-2 w-full max-w-[240px] h-8"
+                controls
+                preload="none"
+                src={`/api/files/${message.extra_json.audio_path}`}
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
           </>
         )}
 
         {/* 操作按钮组 */}
         {!isEditing && (
           <div className="message-actions absolute -top-1 right-2 flex gap-1 transition">
+            {canSpeak && message.status !== 'pending' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); speakMessage(); }}
+                className="text-[10px] px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 rounded flex items-center gap-0.5"
+                title={speaking ? '停止朗读' : (message.extra_json?.audio_path ? '重播缓存' : '朗读')}
+              >
+                {speaking ? <Square className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                {speaking ? '停止' : (message.extra_json?.audio_path ? '重播' : '朗读')}
+              </button>
+            )}
             <button
               onClick={(e) => { e.stopPropagation(); copyToClipboard(); }}
               className="text-[10px] px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 rounded flex items-center gap-0.5"

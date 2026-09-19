@@ -34,6 +34,19 @@ export function normalizeImagenBaseUrl(url: string): string {
   return `${trimmed}/v1`;
 }
 
+/** Qwen3TTS health is /health, speech is /v1/audio/speech — root has no required /v1 suffix. */
+export function ttsServiceRoot(url: string): string {
+  return (url || '').replace(/\/+$/, '').replace(/\/v1$/i, '');
+}
+
+export interface SpeechBackend extends CapabilityBackend {
+  voice: string;
+  language: string;
+  instruct: string;
+  seed: string;
+  speakerPt?: string;
+}
+
 function firstNonEmpty(...vals: Array<string | undefined | null>): string {
   for (const v of vals) {
     if (v && v.trim()) return v.trim();
@@ -77,6 +90,7 @@ function fromVendor(vendor: Vendor, model: string, cap: Capability): CapabilityB
   }
   if (kind === 'ollama') baseUrl = normalizeChatBaseUrl(baseUrl, 'ollama');
   if (kind === 'imagen') baseUrl = normalizeImagenBaseUrl(baseUrl);
+  if (kind === 'qwen3tts') baseUrl = ttsServiceRoot(baseUrl);
   const resolvedModel = firstNonEmpty(model, integration.defaultModels[cap], model);
   return { provider: kind, baseUrl, apiKey, model: resolvedModel };
 }
@@ -215,6 +229,37 @@ export function resolveImageEditBackend(): CapabilityBackend {
   return { provider, baseUrl, apiKey, model };
 }
 
+export function resolveSpeechBackend(): SpeechBackend | null {
+  const bound = vendorForCapability('speech');
+  if (bound) {
+    const core = fromVendor(bound.vendor, bound.model, 'speech');
+    const extra = bound.vendor.extra || {};
+    const modelRow = bound.vendor.models.find((m) => m.model === bound.model);
+    const speakerPt = String(modelRow?.extra?.speaker_pt || extra.speaker_pt || '');
+    return {
+      ...core,
+      voice: bound.model || String(extra.default_voice || ''),
+      language: String(extra.language ?? ''),
+      instruct: String(extra.instruct ?? ''),
+      seed: String(extra.seed ?? ''),
+      speakerPt: speakerPt || undefined,
+    };
+  }
+  const url = ttsServiceRoot(firstNonEmpty(getSetting('tts_base_url', ''), process.env.TTS_BASE_URL));
+  if (!url) return null;
+  return {
+    provider: 'qwen3tts',
+    baseUrl: url,
+    apiKey: firstNonEmpty(getSetting('tts_api_key', ''), process.env.TTS_API_KEY),
+    model: 'tts-1',
+    voice: firstNonEmpty(getSetting('tts_voice', ''), process.env.TTS_VOICE),
+    language: firstNonEmpty(getSetting('tts_language', ''), process.env.TTS_LANGUAGE),
+    instruct: firstNonEmpty(getSetting('tts_instruct', ''), process.env.TTS_INSTRUCT),
+    seed: firstNonEmpty(getSetting('tts_seed', ''), process.env.TTS_SEED),
+    speakerPt: firstNonEmpty(getSetting('tts_speaker_pt', ''), process.env.TTS_SPEAKER_PT) || undefined,
+  };
+}
+
 export function resolveActiveBackends(): ActiveBackends {
   const chat = resolveChatBackend();
   const generate = resolveImageGenerateBackend();
@@ -224,6 +269,9 @@ export function resolveActiveBackends(): ActiveBackends {
   const editI = getIntegration(edit.provider);
   const editCapable = hasCapability(edit.provider, 'image.edit');
   const editConfigured = !!(edit.baseUrl && (!editI.requiresApiKey || edit.apiKey));
+  const speech = resolveSpeechBackend();
+  const speechI = speech ? getIntegration(speech.provider) : null;
+  const speechOk = !!(speech?.baseUrl && speechI && hasCapability(speechI.id, 'speech'));
   return {
     chat: { integration: chatI.id, label: chatI.label, model: chat.model, capabilities: [...chatI.capabilities] },
     generate: {
@@ -240,6 +288,14 @@ export function resolveActiveBackends(): ActiveBackends {
       capabilities: [...editI.capabilities],
       available: editCapable && editConfigured,
       reason: !editCapable ? `${editI.label} 不支持改图` : !editConfigured ? '改图后端未配置' : undefined,
+    },
+    speech: {
+      integration: speechOk ? speechI!.id : '',
+      label: speechOk ? speechI!.label : '未配置',
+      model: speechOk ? speech!.voice : '',
+      capabilities: speechOk ? [...speechI!.capabilities] : [],
+      available: speechOk,
+      reason: speechOk ? undefined : '未绑定朗读供应商',
     },
   };
 }

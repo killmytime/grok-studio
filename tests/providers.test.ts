@@ -157,6 +157,10 @@ describe('capability providers (shipped routes)', () => {
     const src = readFileSync(join(process.cwd(), 'app/components/SettingsDrawer.tsx'), 'utf8');
     expect(src).toContain('/api/vendors');
     expect(src).toContain('/api/vendors/models');
+    expect(src).toContain('/v1/audio/voices');
+    const pageSrc = readFileSync(join(process.cwd(), 'app/page.tsx'), 'utf8');
+    expect(pageSrc).toContain('elapsed_ms');
+    expect(pageSrc).toContain('种子');
     expect(src).toContain('/api/bindings');
     expect(src).toContain('STUDIO_PASSWORD');
     expect(src).toContain("test('chat')");
@@ -358,6 +362,9 @@ describe('capability providers (shipped routes)', () => {
     const row = db.getImage(img.id);
     expect(row).toBeTruthy();
     expect(row.sha256).toBeTruthy();
+    expect(typeof row.extra_json?.elapsed_ms).toBe('number');
+    expect(row.extra_json.elapsed_ms).toBeGreaterThanOrEqual(0);
+    expect(row.extra_json.provider).toBe('grok');
   });
 
   it('Grok edit persists a completed image and hits /images/edits, not the Jetson gateway', async () => {

@@ -221,6 +221,24 @@ export function listMessages(convId: string) {
   }));
 }
 
+export function getMessage(id: string) {
+  const db = getDb();
+  const row = db.prepare(`SELECT * FROM messages WHERE id = ?`).get(id) as any;
+  if (!row) return undefined;
+  return {
+    ...row,
+    extra_json: row.extra_json ? JSON.parse(row.extra_json) : null,
+  } as Message;
+}
+
+export function mergeMessageExtra(id: string, extra: Record<string, any>) {
+  const msg = getMessage(id);
+  if (!msg) return undefined;
+  const next = { ...(msg.extra_json || {}), ...extra };
+  getDb().prepare(`UPDATE messages SET extra_json = ? WHERE id = ?`).run(JSON.stringify(next), id);
+  return getMessage(id);
+}
+
 // Images
 function stringifyExtra(extra: ImageAsset['extra_json'] | string | null | undefined): string | null {
   if (extra == null || extra === '') return null;

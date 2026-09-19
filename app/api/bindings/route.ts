@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { hasCapability, type Capability } from '@/app/lib/integrations/catalog';
 import { getVendor, listBindings, setBinding } from '@/app/lib/vendors';
 
-const CAPS: Capability[] = ['chat', 'image.generate', 'image.edit'];
+const CAPS: Capability[] = ['chat', 'image.generate', 'image.edit', 'speech'];
 
 export async function GET() {
   return NextResponse.json({ bindings: listBindings() });

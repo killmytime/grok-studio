@@ -12,9 +12,10 @@ const CAP_LABEL: Record<Capability, string> = {
   chat: '聊天',
   'image.generate': '生图',
   'image.edit': '改图',
+  speech: '朗读',
 };
 
-type VendorModel = { model: string; capabilities: Capability[] };
+type VendorModel = { model: string; capabilities: Capability[]; extra?: Record<string, unknown> | null };
 type RemoteModel = { id: string; suggested: Capability[] };
 type Vendor = {
   id: string;
@@ -30,7 +31,7 @@ type Binding = { capability: Capability; vendor_id: string; model: string };
 interface Props {
   settings: AppSettings;
   onSave: (s: Partial<AppSettings>) => Promise<void>;
-  onTest: (type: 'chat' | 'image' | 'jetson') => Promise<any>;
+  onTest: (type: 'chat' | 'image' | 'jetson' | 'tts') => Promise<any>;
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -54,6 +55,11 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
   const [remote, setRemote] = useState<Record<string, RemoteModel[]>>({});
   const [fetching, setFetching] = useState<Record<string, boolean>>({});
   const [fetchErr, setFetchErr] = useState<Record<string, string>>({});
+  const [ttsPreviewUrl, setTtsPreviewUrl] = useState<string | null>(null);
+  const [ttsPreviewing, setTtsPreviewing] = useState(false);
+  const [ttsMeta, setTtsMeta] = useState<Record<string, { mode?: string; default_voice?: string }>>({});
+  const [cloneName, setCloneName] = useState<Record<string, string>>({});
+  const [cloning, setCloning] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setForm(settings);
@@ -84,7 +90,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
     setOpen(false);
   };
 
-  const test = async (type: 'chat' | 'image' | 'jetson') => {
+  const test = async (type: 'chat' | 'image' | 'jetson' | 'tts') => {
     setTesting(type);
     setTestResult(null);
     const res = await onTest(type);
@@ -137,6 +143,9 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
       if (!res.ok) throw new Error(data.error || '拉取失败');
       const list: RemoteModel[] = data.models || [];
       setRemote((p) => ({ ...p, [v.id]: list }));
+      if (data.mode || data.default_voice) {
+        setTtsMeta((p) => ({ ...p, [v.id]: { mode: data.mode, default_voice: data.default_voice } }));
+      }
     } catch (e: any) {
       setFetchErr((p) => ({ ...p, [v.id]: e.message || '拉取失败' }));
     } finally {
@@ -256,10 +265,20 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                     <Field label="API Key">
                       <Input className="settings-input mt-1" type="password" value={v.api_key} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, api_key: e.target.value } : x))} />
                     </Field>
+                    {(kind.extraFields || []).filter((f) => f.kind !== 'url' && f.kind !== 'password').map((field) => (
+                      <Field key={field.key} label={field.label} hint={field.hint}>
+                        <Input
+                          className="settings-input mt-1"
+                          placeholder={field.placeholder}
+                          value={String(v.extra?.[field.key] ?? '')}
+                          onChange={(e) => patchVendor(v.id, { extra: { ...(v.extra || {}), [field.key]: e.target.value } })}
+                        />
+                      </Field>
+                    ))}
                   </div>
                   <div className="flex flex-wrap gap-2 items-center">
                     <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fetchModels(v)} disabled={!!fetching[v.id] || !v.base_url}>
-                      {fetching[v.id] ? '拉取中…' : '从 /v1/models 拉取'}
+                      {fetching[v.id] ? '拉取中…' : (kind.id === 'qwen3tts' ? '从 /v1/audio/voices 拉取' : '从 /v1/models 拉取')}
                     </Button>
                     <select
                       className="settings-input h-7 rounded-md bg-transparent border px-2 text-xs min-w-[160px]"
@@ -269,20 +288,67 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                         e.target.value = '';
                       }}
                     >
-                      <option value="">{(remote[v.id] || []).length ? '选择模型加入' : '先拉取模型列表'}</option>
+                      <option value="">{(remote[v.id] || []).length ? (kind.id === 'qwen3tts' ? '选择音色加入' : '选择模型加入') : (kind.id === 'qwen3tts' ? '先拉取音色列表' : '先拉取模型列表')}</option>
                       {(remote[v.id] || []).filter((m) => !v.models.some((s) => s.model === m.id)).map((m) => (
                         <option key={m.id} value={m.id}>{m.id}</option>
                       ))}
                     </select>
                   </div>
                   {fetchErr[v.id] ? <div className="text-[10px] text-red-400">{fetchErr[v.id]}</div> : null}
+                  {kind.id === 'qwen3tts' && ttsMeta[v.id]?.mode === 'clone' && (
+                    <div className="text-[10px] text-amber-400">
+                      这是 clone 镜像，没有 vivian。只有 dynamic。请上传 3–10 秒参考音频生成音色，再把「朗读」绑到它。
+                    </div>
+                  )}
+                  {kind.id === 'qwen3tts' && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input
+                        className="settings-input h-7 text-xs w-28"
+                        placeholder="音色名"
+                        value={cloneName[v.id] || ''}
+                        onChange={(e) => setCloneName((p) => ({ ...p, [v.id]: e.target.value }))}
+                      />
+                      <label className="text-[11px] text-zinc-400">
+                        <input
+                          type="file"
+                          accept="audio/*,.wav,.mp3,.m4a"
+                          className="text-[11px]"
+                          disabled={!!cloning[v.id]}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!file) return;
+                            const name = (cloneName[v.id] || file.name.replace(/\.[^.]+$/, '') || 'speaker').trim();
+                            setCloning((p) => ({ ...p, [v.id]: true }));
+                            try {
+                              const fd = new FormData();
+                              fd.set('vendor_id', v.id);
+                              fd.set('name', name);
+                              fd.set('ref_audio', file);
+                              const res = await fetch('/api/tts/clone', { method: 'POST', body: fd });
+                              const data = await res.json();
+                              if (!res.ok) throw new Error(data.error || '克隆失败');
+                              await refresh();
+                            } catch (err: any) {
+                              setFetchErr((p) => ({ ...p, [v.id]: err.message }));
+                            } finally {
+                              setCloning((p) => ({ ...p, [v.id]: false }));
+                            }
+                          }}
+                        />
+                        {cloning[v.id] ? '克隆中…' : '上传参考音频克隆'}
+                      </label>
+                    </div>
+                  )}
                   <div className="space-y-1">
                     {v.models.length === 0 && (
                       <div className="text-[10px] text-zinc-500">还没有选用模型。拉取后从下拉列表勾选。</div>
                     )}
                     {v.models.map((m) => (
                       <div key={m.model} className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-300">
-                        <span className="font-mono truncate max-w-[200px]" title={m.model}>{m.model}</span>
+                        <span className="font-mono truncate max-w-[200px]" title={m.model}>
+                          {m.model}{m.extra?.speaker_pt ? ' · pt' : ''}
+                        </span>
                         {kind.capabilities.map((cap) => (
                           <label key={cap} className="inline-flex items-center gap-1 text-zinc-400">
                             <input
@@ -303,7 +369,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
             })}
             <div className="flex gap-2">
               <select value={addKind} onChange={(e) => setAddKind(e.target.value)} className="settings-input h-9 rounded-md bg-transparent border px-2 text-sm">
-                {(['ollama', 'imagen', 'grok'] as const).map((id) => {
+                {(['ollama', 'imagen', 'qwen3tts', 'grok'] as const).map((id) => {
                   const k: IntegrationManifest = getIntegration(id);
                   return <option key={k.id} value={k.id}>{k.label}</option>;
                 })}
@@ -318,6 +384,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
               ['chat', '聊天'],
               ['image.generate', '生图'],
               ['image.edit', '改图'],
+              ['speech', '朗读'],
             ] as Array<[Capability, string]>).map(([cap, label]) => {
               const options = modelsFor(cap);
               const cur = bindingFor(cap);
@@ -360,7 +427,44 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
             <Button onClick={handleSave} className="flex-1 min-w-[120px]">保存</Button>
             <Button variant="outline" onClick={() => test('chat')} disabled={!!testing}>测试聊天</Button>
             <Button variant="outline" onClick={() => test(genKind === 'imagen' ? 'jetson' : 'image')} disabled={!!testing}>测试生图</Button>
+            <Button variant="outline" onClick={() => test('tts')} disabled={!!testing}>测试朗读就绪</Button>
+            <Button
+              variant="outline"
+              disabled={ttsPreviewing}
+              onClick={async () => {
+                setTtsPreviewing(true);
+                try {
+                  const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+                  const ctx = Ctx ? new Ctx() : undefined;
+                  if (ctx?.state === 'suspended') await ctx.resume();
+                  const res = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: '这是朗读测试。' }),
+                  });
+                  if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || `HTTP ${res.status}`);
+                  }
+                  const clone = res.clone();
+                  const { playAudioResponse } = await import('@/app/lib/wav-stream-player');
+                  await playAudioResponse(res, { ctx });
+                  const blob = await clone.blob();
+                  if (ttsPreviewUrl) URL.revokeObjectURL(ttsPreviewUrl);
+                  setTtsPreviewUrl(URL.createObjectURL(blob));
+                } catch (e: any) {
+                  setTestResult({ ok: false, error: e.message });
+                } finally {
+                  setTtsPreviewing(false);
+                }
+              }}
+            >
+              {ttsPreviewing ? '试听中…' : '试听一句'}
+            </Button>
           </div>
+          {ttsPreviewUrl && (
+            <audio className="w-full" controls src={ttsPreviewUrl} />
+          )}
           {testResult && (
             <div className="text-xs p-2 bg-zinc-900 rounded break-all">
               {testResult.ok ? '连接成功' : '连接失败'}: {JSON.stringify(testResult).slice(0, 300)}

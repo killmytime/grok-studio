@@ -80,5 +80,6 @@ export interface AppSettings {
     chat: { integration: string; label: string; model: string; capabilities: string[] };
     generate: { integration: string; label: string; model: string; capabilities: string[]; supportsEdit: boolean };
     edit: { integration: string; label: string; model: string; capabilities: string[]; available: boolean; reason?: string };
+    speech?: { integration: string; label: string; model: string; capabilities: string[]; available: boolean; reason?: string };
   };
 }

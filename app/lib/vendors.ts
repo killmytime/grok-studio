@@ -137,6 +137,27 @@ export function getBinding(capability: Capability): CapabilityBinding | undefine
   return db.prepare(`SELECT * FROM capability_bindings WHERE capability = ?`).get(capability) as CapabilityBinding | undefined;
 }
 
+export function addOrReplaceVendorModel(
+  vendorId: string,
+  model: { model: string; capabilities: Capability[]; extra?: Record<string, unknown> }
+): Vendor {
+  const vendor = getVendor(vendorId);
+  if (!vendor) throw new Error('vendor not found');
+  const models = vendor.models
+    .filter((m) => m.model !== model.model)
+    .map((m) => ({ model: m.model, capabilities: m.capabilities, extra: m.extra || undefined }));
+  models.push(model);
+  return upsertVendor({
+    id: vendor.id,
+    kind: vendor.kind,
+    label: vendor.label,
+    base_url: vendor.base_url,
+    api_key: vendor.api_key,
+    extra: vendor.extra,
+    models,
+  });
+}
+
 export function setBinding(capability: Capability, vendor_id: string, model: string): CapabilityBinding {
   const db = getDb();
   db.prepare(`
@@ -155,9 +176,7 @@ export function defaultModelsForKind(kind: string): Array<{ model: string; capab
     list.push(cap as Capability);
     byModel.set(model, list);
   }
-  if (byModel.size === 0 && integration.capabilities.length) {
-    return [{ model: integration.id, capabilities: [...integration.capabilities] }];
-  }
+  if (byModel.size === 0) return [];
   return [...byModel.entries()].map(([model, capabilities]) => ({ model, capabilities }));
 }
 

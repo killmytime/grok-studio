@@ -1,4 +1,5 @@
 import { addImage, getImage, updateImage } from '../db';
+import { mergeImageMeta } from '../image-meta';
 import {
   finalizePendingImageFromBase64,
   finalizePendingImageFromUrl,
@@ -85,6 +86,7 @@ export async function grokGenerate(opts: {
   };
   if (opts.quality) body.quality = opts.quality;
 
+  const started = Date.now();
   const res = await fetch(`${backend.baseUrl}/images/generations`, {
     method: 'POST',
     headers: bearerHeaders(backend.apiKey),
@@ -96,7 +98,14 @@ export async function grokGenerate(opts: {
   }
   const items = unpackImageItems(data);
   const images = await persistGrokItems(items, opts.conversation_id, opts.prompt, backend.model, aspect, resolution);
-  return { images };
+  const elapsed_ms = Date.now() - started;
+  const stamped = images.map((img) => mergeImageMeta(img.id, {
+    provider: backend.provider || 'grok',
+    n,
+    quality: opts.quality || null,
+    elapsed_ms,
+  }) || img);
+  return { images: stamped };
 }
 
 export async function jetsonGenerate(opts: {
@@ -125,6 +134,10 @@ export async function jetsonGenerate(opts: {
     protocol: 'openai-images',
     size,
     model,
+    n,
+    steps: backend.jetsonSteps || null,
+    seed: backend.jetsonSeed || null,
+    started_at: Date.now(),
   };
   const asset = addImage({
     conversation_id: opts.conversation_id,
@@ -161,12 +174,15 @@ export async function jetsonGenerate(opts: {
       const items = unpackImageItems(data);
       const first = items[0];
       const b64 = first?.b64_json || first?.base64 || first?.image_base64;
+      const startedAt = Number(extra.started_at) || Date.now();
       if (b64) {
         await finalizePendingImageFromBase64(asset.id, normalizeB64(b64), first?.mime || 'image/png');
+        mergeImageMeta(asset.id, { elapsed_ms: Date.now() - startedAt });
         return;
       }
       if (first?.url) {
         await finalizePendingImageFromUrl(asset.id, first.url);
+        mergeImageMeta(asset.id, { elapsed_ms: Date.now() - startedAt });
         return;
       }
       updateImage(asset.id, { status: 'error', error_message: 'Jetson returned no image payload' });

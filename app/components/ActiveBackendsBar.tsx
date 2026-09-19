@@ -34,6 +34,9 @@ export default function ActiveBackendsBar({ settings }: { settings: SettingsLike
         model={active.edit.available ? active.edit.model : '不可用'}
         label={active.edit.available ? active.edit.label : (active.edit.reason || '不支持')}
       />
+      {active.speech?.available ? (
+        <Chip kind="朗读" model={active.speech.model} label={active.speech.label} />
+      ) : null}
     </div>
   );
 }

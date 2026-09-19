@@ -1,13 +1,28 @@
 import { NextResponse } from 'next/server';
-import { resolveChatBackend, resolveImageGenerateBackend, bearerHeaders } from '@/app/lib/backends';
+import { resolveChatBackend, resolveImageGenerateBackend, resolveSpeechBackend, bearerHeaders } from '@/app/lib/backends';
 import { assertChatConfigured, fetchChatCompletions } from '@/app/lib/providers/chat';
 import { jetsonHealth } from '@/app/lib/providers/jetson';
+import { ttsHealth } from '@/app/lib/providers/tts';
 import { canonicalIntegrationId } from '@/app/lib/integrations/catalog';
 
 export async function POST(req: Request) {
-  const { type } = await req.json(); // 'chat' | 'image' | 'generate' | 'jetson' | 'imagen'
+  const { type } = await req.json(); // 'chat' | 'image' | 'generate' | 'jetson' | 'imagen' | 'tts'
 
   try {
+    if (type === 'tts' || type === 'speech') {
+      const backend = resolveSpeechBackend();
+      if (!backend?.baseUrl) {
+        return NextResponse.json({ ok: false, error: '未配置朗读供应商' }, { status: 400 });
+      }
+      const result = await ttsHealth(backend);
+      return NextResponse.json({
+        ok: result.ok,
+        status: result.status,
+        body: result.body,
+        backend: result.backend,
+      });
+    }
+
     if (type === 'chat') {
       const backend = resolveChatBackend();
       const configured = assertChatConfigured(backend);

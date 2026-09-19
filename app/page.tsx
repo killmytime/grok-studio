@@ -8,6 +8,7 @@ import ImageCard from './components/ImageCard';
 import SettingsDrawer from './components/SettingsDrawer';
 import ActiveBackendsBar from './components/ActiveBackendsBar';
 import { describeFromSettings } from './lib/integrations/catalog';
+import { formatElapsedMs } from './lib/format-elapsed';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -517,7 +518,7 @@ export default function GrokStudio() {
     setConversations(prev => prev.map(c => c.id === id ? { ...c, title: newTitle } : c));
   }
 
-  async function testConnection(type: 'chat' | 'image' | 'jetson') {
+  async function testConnection(type: 'chat' | 'image' | 'jetson' | 'tts') {
     const res = await fetch('/api/health', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -890,7 +891,13 @@ export default function GrokStudio() {
                 message={m} 
                 onRetry={retryMessage} 
                 onDelete={deleteMessage} 
-                onEdit={editMessage} 
+                onEdit={editMessage}
+                canSpeak={!!activeBackends.speech?.available && m.role === 'assistant'}
+                onAudioReady={(id, audioPath) => {
+                  setMessages((prev) => prev.map((x) =>
+                    x.id === id ? { ...x, extra_json: { ...(x.extra_json || {}), audio_path: audioPath } } : x
+                  ));
+                }}
               />
             ))}
             {isStreaming && <div className="text-xs text-zinc-500 pl-4">正在生成回复...</div>}
@@ -1387,40 +1394,26 @@ export default function GrokStudio() {
                       </Button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
-                      <div>
-                        <span className="text-zinc-600">模型</span>
-                        <p className="truncate text-zinc-400">{previewImage.model || "-"}</p>
-                      </div>
-
-                      <div>
-                        <span className="text-zinc-600">比例</span>
-                        <p className="text-zinc-400">{previewImage.aspect_ratio || "-"}</p>
-                      </div>
-
-                      <div>
-                        <span className="text-zinc-600">分辨率</span>
-                        <p className="text-zinc-400">{previewImage.resolution || "-"}</p>
-                      </div>
-
-                      <div>
-                        <span className="text-zinc-600">像素尺寸</span>
-                        <p className="text-zinc-400">
-                          {previewImage.width} × {previewImage.height}
-                        </p>
-                      </div>
-
-                      <div>
-                        <span className="text-zinc-600">类型</span>
-                        <p className="truncate text-zinc-400">{previewImage.kind || "-"}</p>
-                      </div>
-
-                      <div>
-                        <span className="text-zinc-600">生成时间</span>
-                        <p className="truncate text-zinc-400">
-                          {new Date(previewImage.created_at).toLocaleString()}
-                        </p>
-                      </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3 lg:grid-cols-4">
+                      {[
+                        ['供应商', previewImage.extra_json?.provider || '—'],
+                        ['模型', previewImage.model || '—'],
+                        ['类型', previewImage.kind || '—'],
+                        ['耗时', formatElapsedMs(previewImage.extra_json?.elapsed_ms)],
+                        ['比例', previewImage.aspect_ratio || '—'],
+                        ['分辨率', previewImage.resolution || '—'],
+                        ['像素', previewImage.width && previewImage.height ? `${previewImage.width} × ${previewImage.height}` : '—'],
+                        ['请求尺寸', previewImage.extra_json?.size || '—'],
+                        ['种子', previewImage.extra_json?.seed ?? '—'],
+                        ['步数', previewImage.extra_json?.steps ?? '—'],
+                        ['张数', previewImage.extra_json?.n ?? previewImage.n_index ?? '—'],
+                        ['生成时间', previewImage.created_at ? new Date(previewImage.created_at).toLocaleString() : '—'],
+                      ].map(([label, value]) => (
+                        <div key={String(label)}>
+                          <span className="text-zinc-600">{label}</span>
+                          <p className="truncate text-zinc-400" title={String(value)}>{String(value)}</p>
+                        </div>
+                      ))}
                     </div>
 
                     {previewImage.parent_image_id && (

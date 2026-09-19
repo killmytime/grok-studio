@@ -8,10 +8,11 @@
 - 文生图（Grok，或 LazyCat Imagen / Z-Image-Turbo）
 - 改图（只走 Grok；Imagen 不能改图）
 - 图片落在本机 `data/`，会话和供应商配置在 SQLite
-- 设置里添加供应商、从 `/v1/models` 拉模型、按能力绑定聊天/生图/改图
+- 设置里添加供应商、从 `/v1/models` 或 `/v1/audio/voices` 拉列表、按能力绑定聊天/生图/改图/朗读
+- 朗读：Qwen3TTS（`wav` 边收边播）；播完存到 `data/audio/`，同一条消息再点就重播缓存
 - 可选整站密码（IPv4 / IPv6 / 局域网同一道门）
 
-下一阶段（还没做）：移动端输入区和顶栏收一收，再接入 TTS。
+下一阶段：移动端输入区和顶栏收一收。
 
 ## 跑起来
 
@@ -33,7 +34,7 @@ STUDIO_PASSWORD=          # 可选。设了先登录
 DATA_DIR=./data
 ```
 
-供应商、模型、能力不要堆环境变量，去设置页改。Grok 是基本盘；Ollama、Imagen 在界面添加。
+供应商、模型、能力不要堆环境变量，去设置页改。Grok 是基本盘；Ollama、Imagen、Qwen3TTS 在界面添加。TTS 地址形如 `https://qwen3tts-ai.<微服>.heiyu.space`。`0.6b-custom-*` 才有 vivian；`0.6b-base-clone-*` 只有 `dynamic`，要在设置里上传参考音频生成音色后再朗读。
 
 Docker：`docker compose up -d --build`，数据在 volume `grok-data`。
 

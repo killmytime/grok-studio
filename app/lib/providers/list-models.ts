@@ -1,4 +1,4 @@
-import { bearerHeaders, normalizeChatBaseUrl, normalizeImagenBaseUrl } from '../backends';
+import { bearerHeaders, normalizeChatBaseUrl, normalizeImagenBaseUrl, ttsServiceRoot } from '../backends';
 import { canonicalIntegrationId, getIntegration, type Capability } from '../integrations/catalog';
 
 export interface RemoteModel {
@@ -12,6 +12,7 @@ export function modelsBaseUrl(kind: string, raw: string): string {
   if (!trimmed) return '';
   if (k === 'imagen') return normalizeImagenBaseUrl(trimmed);
   if (k === 'ollama') return normalizeChatBaseUrl(trimmed, 'ollama');
+  if (k === 'qwen3tts') return ttsServiceRoot(trimmed);
   if (/\/v1$/i.test(trimmed)) return trimmed;
   return trimmed;
 }
@@ -22,6 +23,7 @@ export function guessModelCapabilities(kind: string, modelId: string): Capabilit
   const id = modelId.toLowerCase();
   let guessed: Capability[];
   if (integration.id === 'imagen') guessed = ['image.generate'];
+  else if (integration.id === 'qwen3tts') guessed = ['speech'];
   else if (integration.id === 'ollama') guessed = ['chat'];
   else if (/imagine|image|dall|flux|sd-|diffusion|turbo/.test(id) && !/chat|instruct|latest$/.test(id)) {
     guessed = ['image.generate', 'image.edit'];
@@ -39,6 +41,8 @@ function collectIds(data: any): string[] {
       ? data.data
       : Array.isArray(data.models)
         ? data.models
+        : Array.isArray(data.voices)
+          ? data.voices
         : [];
   const ids = rows.map((row: any) => {
     if (typeof row === 'string') return row;
@@ -51,7 +55,7 @@ export async function listRemoteModels(opts: {
   kind: string;
   baseUrl: string;
   apiKey?: string;
-}): Promise<{ models: RemoteModel[]; endpoint: string }> {
+}): Promise<{ models: RemoteModel[]; endpoint: string; mode?: string; default_voice?: string }> {
   const kind = canonicalIntegrationId(opts.kind);
   const base = modelsBaseUrl(kind, opts.baseUrl);
   if (!base) {
@@ -60,7 +64,7 @@ export async function listRemoteModels(opts: {
     throw err;
   }
   const headers = bearerHeaders(opts.apiKey || '');
-  const endpoint = `${base}/models`;
+  const endpoint = kind === 'qwen3tts' ? `${base}/v1/audio/voices` : `${base}/models`;
   let res = await fetch(endpoint, { headers });
   let data = await res.json().catch(() => ({}));
 
@@ -87,5 +91,7 @@ export async function listRemoteModels(opts: {
   return {
     endpoint,
     models: ids.map((id) => ({ id, suggested: guessModelCapabilities(kind, id) })),
+    mode: data.mode,
+    default_voice: data.default_voice,
   };
 }
