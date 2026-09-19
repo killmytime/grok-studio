@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { join } from 'path';
-import { mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync, unlinkSync } from 'fs';
 import type { Message, ImageAsset } from './types';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
@@ -25,6 +25,7 @@ export function getDb() {
     ensureDataDir();
     db = new Database(/* turbopackIgnore: true */ DB_PATH);
     db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
     initSchema(db);
   }
   return db;
@@ -76,6 +77,8 @@ function initSchema(db: Database.Database) {
       created_at TEXT NOT NULL,
       status TEXT DEFAULT 'completed',
       error_message TEXT,
+      job_id TEXT,
+      extra_json TEXT,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
       FOREIGN KEY (parent_image_id) REFERENCES images(id) ON DELETE SET NULL
     );
@@ -85,8 +88,35 @@ function initSchema(db: Database.Database) {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS vendors (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      label TEXT NOT NULL,
+      base_url TEXT NOT NULL DEFAULT '',
+      api_key TEXT NOT NULL DEFAULT '',
+      extra_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS vendor_models (
+      id TEXT PRIMARY KEY,
+      vendor_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      capabilities TEXT NOT NULL,
+      extra_json TEXT,
+      FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS capability_bindings (
+      capability TEXT PRIMARY KEY,
+      vendor_id TEXT NOT NULL,
+      model TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_images_conv ON images(conversation_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_vendor_models ON vendor_models(vendor_id);
   `);
 
   // Migration: add status columns if not exist (for existing DBs)
@@ -105,6 +135,13 @@ function initSchema(db: Database.Database) {
     if (!imgCols.some(c => c.name === 'error_message')) {
       db.exec("ALTER TABLE images ADD COLUMN error_message TEXT");
     }
+    if (!imgCols.some(c => c.name === 'job_id')) {
+      db.exec('ALTER TABLE images ADD COLUMN job_id TEXT');
+    }
+    if (!imgCols.some(c => c.name === 'extra_json')) {
+      db.exec('ALTER TABLE images ADD COLUMN extra_json TEXT');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_images_job ON images(job_id)');
     const convCols = db.prepare("PRAGMA table_info(conversations)").all() as any[];
     if (!convCols.some(c => c.name === 'summary')) {
       db.exec("ALTER TABLE conversations ADD COLUMN summary TEXT");
@@ -185,6 +222,21 @@ export function listMessages(convId: string) {
 }
 
 // Images
+function stringifyExtra(extra: ImageAsset['extra_json'] | string | null | undefined): string | null {
+  if (extra == null || extra === '') return null;
+  return typeof extra === 'string' ? extra : JSON.stringify(extra);
+}
+
+function parseImageRow(row: any): ImageAsset | undefined {
+  if (!row) return undefined;
+  return {
+    ...row,
+    extra_json: row.extra_json
+      ? (typeof row.extra_json === 'string' ? JSON.parse(row.extra_json) : row.extra_json)
+      : null,
+  };
+}
+
 export function addImage(asset: Omit<ImageAsset, 'id' | 'created_at'> & { status?: 'pending' | 'completed' | 'error'; error_message?: string | null }) {
   const db = getDb();
   const id = crypto.randomUUID();
@@ -193,28 +245,73 @@ export function addImage(asset: Omit<ImageAsset, 'id' | 'created_at'> & { status
     INSERT INTO images (
       id, conversation_id, message_id, kind, prompt, negative_prompt,
       model, aspect_ratio, resolution, quality, n_index, parent_image_id,
-      file_path, thumb_path, mime, width, height, sha256, created_at, status, error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      file_path, thumb_path, mime, width, height, sha256, created_at, status, error_message,
+      job_id, extra_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     id, asset.conversation_id, asset.message_id, asset.kind, asset.prompt, asset.negative_prompt,
     asset.model, asset.aspect_ratio, asset.resolution, asset.quality, asset.n_index, asset.parent_image_id,
     asset.file_path, asset.thumb_path, asset.mime, asset.width, asset.height, asset.sha256, now,
-    asset.status || 'completed', asset.error_message || null
+    asset.status || 'completed', asset.error_message || null,
+    asset.job_id || null, stringifyExtra(asset.extra_json)
   );
-  return { ...asset, id, created_at: now } as ImageAsset;
+  return { ...asset, id, created_at: now, extra_json: asset.extra_json || null } as ImageAsset;
 }
 
 export function listImages(convId: string) {
   const db = getDb();
-  return db.prepare(`
+  const rows = db.prepare(`
     SELECT * FROM images WHERE conversation_id = ? ORDER BY created_at DESC
-  `).all(convId) as ImageAsset[];
+  `).all(convId) as any[];
+  return rows.map(r => parseImageRow(r)!) as ImageAsset[];
 }
 
 export function getImage(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM images WHERE id = ?`).get(id) as ImageAsset | undefined;
+  return parseImageRow(db.prepare(`SELECT * FROM images WHERE id = ?`).get(id));
+}
+
+const IMAGE_UPDATE_FIELDS = new Set([
+  'status', 'error_message', 'file_path', 'thumb_path', 'mime', 'width', 'height',
+  'sha256', 'job_id', 'extra_json', 'model', 'prompt', 'negative_prompt',
+]);
+
+export function updateImage(id: string, updates: Partial<ImageAsset> & { extra_json?: Record<string, any> | string | null }) {
+  const db = getDb();
+  const fields: string[] = [];
+  const values: any[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (!IMAGE_UPDATE_FIELDS.has(key)) continue;
+    fields.push(`${key} = ?`);
+    if (key === 'extra_json') values.push(stringifyExtra(value as any));
+    else values.push(value ?? null);
+  }
+  if (fields.length === 0) return getImage(id);
+  values.push(id);
+  db.prepare(`UPDATE images SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  return getImage(id);
+}
+
+export function deleteImage(id: string): boolean {
+  const db = getDb();
+  const img = db.prepare(`SELECT file_path, thumb_path FROM images WHERE id = ?`).get(id) as { file_path: string; thumb_path: string } | undefined;
+  if (!img) return false;
+
+  // Physical delete of files
+  try {
+    const imgFullPath = join(DATA_DIR, img.file_path);
+    const thumbFullPath = join(DATA_DIR, img.thumb_path);
+    if (existsSync(imgFullPath)) unlinkSync(imgFullPath);
+    if (existsSync(thumbFullPath)) unlinkSync(thumbFullPath);
+  } catch (e) {
+    console.error('Failed to delete image files:', e);
+    // Continue to delete DB record even if file delete fails
+  }
+
+  // Delete DB record
+  const result = db.prepare(`DELETE FROM images WHERE id = ?`).run(id);
+  return result.changes > 0;
 }
 
 // Settings

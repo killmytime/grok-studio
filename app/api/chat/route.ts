@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getSetting, addMessage, getConversation, updateMessageStatus } from '@/app/lib/db';
+import { addMessage, getConversation, getSetting, updateMessageStatus } from '@/app/lib/db';
+import { assertChatConfigured, fetchChatCompletions } from '@/app/lib/providers/chat';
+import { resolveChatBackend } from '@/app/lib/backends';
 
 export const runtime = 'nodejs';
 
@@ -9,33 +11,26 @@ export async function POST(req: Request) {
   if (!conversation_id) return NextResponse.json({ error: 'conversation_id required' }, { status: 400 });
   if (!getConversation(conversation_id)) return NextResponse.json({ error: 'Conv not found' }, { status: 404 });
 
-  const base = getSetting('base_url', process.env.GROK_BASE_URL || '');
-  const key = getSetting('api_key', process.env.GROK_API_KEY || '');
-  const model = overrideModel || getSetting('chat_model', process.env.CHAT_MODEL || 'grok-latest');
+  const backend = resolveChatBackend();
+  const model = overrideModel || backend.model;
+  const configured = assertChatConfigured(backend);
+  if (configured) return NextResponse.json({ error: configured }, { status: 400 });
+
   const temperature = parseFloat(getSetting('temperature', '0.7'));
   const maxTokens = parseInt(getSetting('max_tokens', '4096'));
-
-  if (!base || !key) return NextResponse.json({ error: 'API not configured' }, { status: 400 });
-
   const limited = messages.slice(-16);
 
-  const upstreamBody = {
-    model,
-    messages: limited,
-    stream: true,
-    temperature: isNaN(temperature) ? 0.7 : temperature,
-    max_tokens: isNaN(maxTokens) ? 4096 : maxTokens,
-  };
-
   try {
-    const upstream = await fetch(`${base}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
+    const upstream = await fetchChatCompletions(
+      {
+        model,
+        messages: limited,
+        stream: true,
+        temperature: isNaN(temperature) ? 0.7 : temperature,
+        max_tokens: isNaN(maxTokens) ? 4096 : maxTokens,
       },
-      body: JSON.stringify(upstreamBody),
-    });
+      backend
+    );
 
     if (!upstream.ok || !upstream.body) {
       const errText = await upstream.text();
@@ -101,6 +96,7 @@ export async function POST(req: Request) {
     if (pendingMessageId) {
       updateMessageStatus(pendingMessageId, 'error', '', e.message);
     }
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    const status = e.status || 500;
+    return NextResponse.json({ error: e.message }, { status });
   }
 }

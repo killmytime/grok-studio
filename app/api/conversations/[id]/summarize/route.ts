@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getConversation, getSetting } from '@/app/lib/db';
+import { assertChatConfigured, fetchChatCompletions } from '@/app/lib/providers/chat';
+import { resolveChatBackend } from '@/app/lib/backends';
 
 const DEFAULT_SUMMARY_PROMPT = `请用中文将以下对话历史压缩成一段简洁的摘要（200-300字以内），保留：
 - 用户的核心偏好、设定、角色关系
@@ -19,39 +21,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ summary: null });
   }
 
-  // 取中间部分做摘要（去掉最前3条和最后6条）
   const middle = allMessages.slice(3, -6);
   if (middle.length < 6) {
     return NextResponse.json({ summary: null });
   }
 
   const historyText = middle.map((m: any) => `${m.role}: ${m.content}`).join('\n');
-
-  const base = getSetting('base_url', process.env.GROK_BASE_URL || '');
-  const key = getSetting('api_key', process.env.GROK_API_KEY || '');
-  const model = getSetting('chat_model', process.env.CHAT_MODEL || 'grok-latest');
-
-  if (!base || !key) {
-    return NextResponse.json({ error: 'API not configured for summarization' }, { status: 400 });
+  const backend = resolveChatBackend();
+  const configured = assertChatConfigured(backend);
+  if (configured) {
+    return NextResponse.json({ error: configured }, { status: 400 });
   }
 
   try {
-    const res = await fetch(`${base}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: summaryPrompt },
-          { role: 'user', content: historyText }
-        ],
-        max_tokens: 400,
-        temperature: 0.3,
-      }),
-    });
+    const res = await fetchChatCompletions({
+      messages: [
+        { role: 'system', content: summaryPrompt },
+        { role: 'user', content: historyText },
+      ],
+      max_tokens: 400,
+      temperature: 0.3,
+      stream: false,
+    }, backend);
 
     if (!res.ok) {
       const errText = await res.text();
@@ -63,6 +54,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     return NextResponse.json({ summary });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: e.message }, { status: e.status || 500 });
   }
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { ImageAsset } from '@/app/lib/types';
 import ImageCard from './ImageCard';
 import { Button } from '@/components/ui/button';
@@ -15,26 +15,28 @@ interface Props {
   onPreview?: (img: ImageAsset) => void;
   conversationId: string | null;
   onRetryImage?: (img: ImageAsset) => void;
+  canEdit?: boolean;
+  editHint?: string;
 }
 
-export default function ImagePanel({ images, currentImage, onSelectImage, onEditImage, onUpload, onPreview, conversationId, onRetryImage }: Props) {
+export default function ImagePanel({ images, currentImage, onSelectImage, onEditImage, onUpload, onPreview, conversationId, onRetryImage, canEdit = true, editHint }: Props) {
   const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !conversationId) return;
     setUploading(true);
     try {
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-        const b64 = (ev.target?.result as string).split(',')[1];
-        await onUpload(file); // parent handles the actual post
-        // Note: actual upload logic in page
-      };
-      reader.readAsDataURL(file);
+      await onUpload(file);
     } finally {
       setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const triggerFileSelect = () => {
+    fileInputRef.current?.click();
   };
 
   return (
@@ -44,12 +46,25 @@ export default function ImagePanel({ images, currentImage, onSelectImage, onEdit
           <div className="font-semibold">图片资产</div>
           <div className="text-xs text-zinc-500">{images.length} 张 · 当前会话</div>
         </div>
-        <label className="cursor-pointer">
-          <input type="file" accept="image/*" className="hidden" onChange={handleUpload} disabled={uploading || !conversationId} />
-          <Button size="sm" variant="outline" className="h-8" disabled={!conversationId}>
+        <div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleUpload}
+            disabled={uploading || !conversationId}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={!conversationId || uploading}
+            onClick={triggerFileSelect}
+          >
             <Upload className="w-4 h-4 mr-1" /> 上传
           </Button>
-        </label>
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto p-3 chat-container">
@@ -86,9 +101,14 @@ export default function ImagePanel({ images, currentImage, onSelectImage, onEdit
           <Button 
             className="w-full mt-3 h-9" 
             onClick={() => onEditImage(currentImage)}
+            disabled={!canEdit || currentImage.status === 'pending' || currentImage.status === 'error'}
+            title={editHint}
           >
             继续编辑这张图
           </Button>
+          {editHint && canEdit && (
+            <div className="text-[10px] text-zinc-500 mt-1.5">{editHint}</div>
+          )}
         </div>
       )}
     </div>

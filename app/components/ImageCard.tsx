@@ -18,6 +18,20 @@ export default function ImageCard({ image, onEdit, onSetCurrent, onRegen, onPrev
   const thumbUrl = `/api/files/${image.thumb_path}`;
   const fullUrl = `/api/files/${image.file_path}`;
   const isError = image.status === 'error';
+  const isPending = image.status === 'pending';
+
+  if (isPending) {
+    const pos = image.extra_json?.queue_position;
+    const label = typeof pos === 'number' && pos > 0 ? `排队中 · 第 ${pos} 位` : '正在生成...';
+    return (
+      <div className="image-card mb-3">
+        <div className="w-full h-[120px] bg-zinc-900 animate-pulse flex items-center justify-center text-xs text-zinc-400">
+          {label}
+        </div>
+        <div className="text-[10px] text-zinc-500 p-2 line-clamp-2">{image.prompt}</div>
+      </div>
+    );
+  }
 
   const copyPrompt = (e: React.MouseEvent) => {
     e.stopPropagation();

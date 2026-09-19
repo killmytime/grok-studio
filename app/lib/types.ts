@@ -41,6 +41,8 @@ export interface ImageAsset {
   created_at: string;
   status?: 'pending' | 'completed' | 'error';
   error_message?: string | null;
+  job_id?: string | null;
+  extra_json?: Record<string, any> | null;
 }
 
 export interface AppSettings {
@@ -55,4 +57,28 @@ export interface AppSettings {
   summary_prompt?: string;
   temperature?: string;
   max_tokens?: string;
+  chat_provider?: string;
+  chat_base_url?: string;
+  chat_api_key?: string;
+  image_generate_provider?: string;
+  image_generate_base_url?: string;
+  image_generate_api_key?: string;
+  image_generate_model?: string;
+  image_edit_provider?: string;
+  image_edit_base_url?: string;
+  image_edit_api_key?: string;
+  image_edit_model?: string;
+  jetson_gateway_url?: string;
+  jetson_api_key?: string;
+  jetson_steps?: string;
+  jetson_seed?: string;
+  resolved_chat_base_url?: string;
+  resolved_image_generate_base_url?: string;
+  resolved_image_edit_base_url?: string;
+  custom_system_prompt?: string;
+  active?: {
+    chat: { integration: string; label: string; model: string; capabilities: string[] };
+    generate: { integration: string; label: string; model: string; capabilities: string[]; supportsEdit: boolean };
+    edit: { integration: string; label: string; model: string; capabilities: string[]; available: boolean; reason?: string };
+  };
 }

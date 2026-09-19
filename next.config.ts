@@ -1,11 +1,9 @@
 import type { NextConfig } from "next";
+import { getAllowedDevOrigins } from "./lib/config";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: [
-    '192.168.1.3',
-    '4a-efc6-c0da-c4e9-4fc0-0.d.heiyu.space',
-    'localhost',
-  ],
+  allowedDevOrigins: getAllowedDevOrigins(),
+  output: 'standalone',
 };
 
 export default nextConfig;

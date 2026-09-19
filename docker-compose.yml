@@ -1,0 +1,15 @@
+services:
+  grok-studio:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATA_DIR=/app/data
+      - HOSTNAME=::
+    volumes:
+      - grok-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  grok-data:

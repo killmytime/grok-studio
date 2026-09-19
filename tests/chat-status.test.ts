@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import * as React from 'react';
 import { join } from 'path';
 import { rmSync, existsSync, mkdirSync } from 'fs';
@@ -148,5 +148,35 @@ describe('ErrorBoundary (prevents white screen on render error)', () => {
     // Cleanup (real render lifecycle)
     root.unmount();
     document.body.removeChild(container);
+  });
+});
+
+import { getAllowedDevOrigins } from '../lib/config';
+
+describe('Config loader (allowedDevOrigins)', () => {
+  const originalEnv = process.env.ALLOWED_DEV_ORIGINS;
+
+  afterEach(() => {
+    process.env.ALLOWED_DEV_ORIGINS = originalEnv;
+  });
+
+  it('returns permissive default when ALLOWED_DEV_ORIGINS is unset', () => {
+    delete process.env.ALLOWED_DEV_ORIGINS;
+    const origins = getAllowedDevOrigins();
+    expect(origins).toContain('**.heiyu.space');
+    expect(origins).toContain('*.*.*.*');
+  });
+
+  it('expands a lone * to tunnel/LAN patterns that Next.js actually matches', () => {
+    process.env.ALLOWED_DEV_ORIGINS = '*';
+    const origins = getAllowedDevOrigins();
+    expect(origins).toContain('**.heiyu.space');
+    expect(origins).not.toContain('*');
+  });
+
+  it('parses comma-separated value from ALLOWED_DEV_ORIGINS', () => {
+    process.env.ALLOWED_DEV_ORIGINS = 'example.com, 192.168.1.10 , ';
+    const origins = getAllowedDevOrigins();
+    expect(origins).toEqual(['example.com', '192.168.1.10']);
   });
 });

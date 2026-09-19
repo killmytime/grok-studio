@@ -6,12 +6,21 @@ import MessageItem from './components/MessageItem';
 import ImagePanel from './components/ImagePanel';
 import ImageCard from './components/ImageCard';
 import SettingsDrawer from './components/SettingsDrawer';
+import ActiveBackendsBar from './components/ActiveBackendsBar';
+import { describeFromSettings } from './lib/integrations/catalog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy, Menu, Image, MessageCircle } from 'lucide-react';
+import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy, Menu, Image, MessageCircle, ChevronDown, ChevronUp, Trash2, MoreHorizontal, ShieldAlert } from 'lucide-react';
 import type { Conversation, Message, ImageAsset, AppSettings } from './lib/types';
 import { useToast } from '@/components/ui/toast';
 
@@ -24,7 +33,9 @@ export default function GrokStudio() {
   const [images, setImages] = useState<ImageAsset[]>([]);
   const [currentImage, setCurrentImage] = useState<ImageAsset | null>(null);
   const [previewImage, setPreviewImage] = useState<ImageAsset | null>(null);
+  const [showImageDetails, setShowImageDetails] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
+  const [isNSFW, setIsNSFW] = useState(false);
 
   const [input, setInput] = useState('');
   const [selectedAspect, setSelectedAspect] = useState('1:1');
@@ -33,6 +44,10 @@ export default function GrokStudio() {
   const [settings, setSettings] = useState<AppSettings>({
     base_url: '', api_key: '', chat_model: 'grok-latest', image_model: 'grok-imagine-image-2.0',
     default_aspect_ratio: '1:1', default_resolution: '1k', default_n: '1', edit_compatibility_mode: 'json',
+    chat_provider: 'grok', chat_base_url: '', chat_api_key: '',
+    image_generate_provider: 'grok', image_generate_base_url: '', image_generate_api_key: '',
+    image_edit_provider: 'grok', image_edit_base_url: '', image_edit_api_key: '',
+    jetson_gateway_url: '', jetson_api_key: '', jetson_steps: '', jetson_seed: '',
     summary_prompt: `请用中文将以下对话历史压缩成一段简洁的摘要（200-300字以内），保留：
 - 用户的核心偏好、设定、角色关系
 - 已讨论的重要事实和决定
@@ -50,6 +65,10 @@ export default function GrokStudio() {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const imageAbortRef = useRef<AbortController | null>(null);
+  const imagePollRef = useRef<Set<string>>(new Set());
+  const imageBusy = isGenerating || images.some(i => i.status === 'pending');
+  const activeBackends = settings.active || describeFromSettings(settings);
+  const canEditImages = !!activeBackends.edit.available;
 
   // Load initial data
   useEffect(() => {
@@ -96,8 +115,35 @@ export default function GrokStudio() {
     if (res.ok) {
       const data = await res.json();
       setImages(data);
+      for (const img of data) {
+        if (img.status === 'pending') pollImageUntilDone(img.id);
+      }
     } else {
       setImages([]);
+    }
+  }
+
+  async function pollImageUntilDone(imageId: string) {
+    if (imagePollRef.current.has(imageId)) return;
+    imagePollRef.current.add(imageId);
+    try {
+      for (let i = 0; i < 180; i++) {
+        const res = await fetch(`/api/images/${imageId}`);
+        if (!res.ok) break;
+        const img = await res.json();
+        setImages(prev => prev.map(x => x.id === imageId ? img : x));
+        if (img.status === 'completed') {
+          setCurrentImage(prev => (prev?.id === imageId || !prev) ? img : prev);
+          return;
+        }
+        if (img.status === 'error') {
+          toast({ title: '生成失败', description: img.error_message || '任务失败', variant: 'error' });
+          return;
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    } finally {
+      imagePollRef.current.delete(imageId);
     }
   }
 
@@ -307,7 +353,9 @@ export default function GrokStudio() {
 
       if (data.images) {
         setImages(prev => [...data.images, ...prev]);
-        // 不再插入聊天消息，避免污染对话历史（图片已在右侧面板显示）
+        for (const img of data.images) {
+          if (img.status === 'pending') pollImageUntilDone(img.id);
+        }
       }
       scrollToBottom();
     } catch (e: any) {
@@ -322,6 +370,15 @@ export default function GrokStudio() {
 
   async function editImage(source: ImageAsset, editPrompt: string) {
     if (!currentConvId) return;
+    if (source.status === 'pending' || source.status === 'error' || !source.file_path) return;
+    if (!canEditImages) {
+      toast({
+        title: '无法改图',
+        description: activeBackends.edit.reason || '当前集成不支持改图。Grok 是默认的改图后端。',
+        variant: 'error',
+      });
+      return;
+    }
     setIsGenerating(true);
     const controller = new AbortController();
     imageAbortRef.current = controller;
@@ -371,6 +428,14 @@ export default function GrokStudio() {
     if (imageAbortRef.current) {
       imageAbortRef.current.abort();
     }
+    const pending = images.filter(i => i.status === 'pending');
+    pending.forEach(img => {
+      fetch(`/api/images/${img.id}/cancel`, { method: 'POST' }).then(async res => {
+        if (!res.ok) return;
+        const updated = await res.json();
+        setImages(prev => prev.map(x => x.id === img.id ? updated : x));
+      }).catch(() => {});
+    });
     setIsStreaming(false);
     setIsGenerating(false);
   }
@@ -414,12 +479,19 @@ export default function GrokStudio() {
       });
       const data = await res.json();
       if (data.summary) {
-        // 这里可以调用 updateConversationSummary，但因为是 client，我们用一个简单 POST
         await fetch(`/api/conversations/${convId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ summary: data.summary }),
         });
+        // 更新前端状态，让“查看记忆”按钮立即出现（自动摘要后也生效）
+        setConversations(prev =>
+          prev.map(c =>
+            c.id === convId
+              ? { ...c, summary: data.summary, summary_updated_at: new Date().toISOString() }
+              : c
+          )
+        );
       }
     } catch (e) {
       // 摘要失败不影响主流程
@@ -445,7 +517,7 @@ export default function GrokStudio() {
     setConversations(prev => prev.map(c => c.id === id ? { ...c, title: newTitle } : c));
   }
 
-  async function testConnection(type: 'chat' | 'image') {
+  async function testConnection(type: 'chat' | 'image' | 'jetson') {
     const res = await fetch('/api/health', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -542,6 +614,8 @@ export default function GrokStudio() {
 
   const closePreview = () => {
     setPreviewImage(null);
+    setShowImageDetails(false);
+    setIsNSFW(false);
   };
 
   const changePreview = (direction: number) => {
@@ -549,6 +623,106 @@ export default function GrokStudio() {
     const newIndex = (previewIndex + direction + images.length) % images.length;
     setPreviewIndex(newIndex);
     setPreviewImage(images[newIndex]);
+    setShowImageDetails(false);
+    setIsNSFW(false); // 切换图片时重置 NSFW 状态
+  };
+
+  // 键盘导航（左右上下）
+  useEffect(() => {
+    if (!previewImage) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        changePreview(-1);
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        changePreview(1);
+      } else if (e.key === 'Escape') {
+        closePreview();
+      } else if (e.key.toLowerCase() === 'd' && e.metaKey) {
+        e.preventDefault();
+        handleDeletePreviewImage();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewImage, previewIndex, images]);
+
+  // 全局粘贴上传图片支持（复制粘贴图片后直接上传到当前会话）
+  useEffect(() => {
+    if (!currentConvId) return;
+
+    const handlePaste = async (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            await handleUpload(file);
+            toast({ title: '图片已上传', description: '已添加到图片资产，可选中后编辑', variant: 'default' });
+            return;
+          }
+        }
+      }
+    };
+
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [currentConvId]);
+
+  // 触摸滑动支持（左右上下）
+  let touchStartX = 0;
+  let touchStartY = 0;
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX = e.changedTouches[0].screenX;
+    touchStartY = e.changedTouches[0].screenY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const deltaX = e.changedTouches[0].screenX - touchStartX;
+    const deltaY = e.changedTouches[0].screenY - touchStartY;
+
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    if (absX > absY && absX > 50) {
+      // 左右滑动
+      changePreview(deltaX > 0 ? -1 : 1);
+    } else if (absY > absX && absY > 50) {
+      // 上下滑动
+      if (deltaY < 0) {
+        setShowImageDetails(true); // 上滑展开详情
+      } else {
+        setShowImageDetails(false); // 下滑收起
+      }
+    }
+  };
+
+  const handleDeletePreviewImage = async () => {
+    if (!previewImage) return;
+    if (!confirm('确定要永久删除这张图片吗？文件和记录将被物理删除，无法恢复。')) return;
+
+    try {
+      const res = await fetch(`/api/images/${previewImage.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('删除失败');
+
+      // 从本地状态移除
+      setImages(prev => prev.filter(img => img.id !== previewImage.id));
+
+      // 如果当前选中的是被删除的图片，清空
+      if (currentImage?.id === previewImage.id) {
+        setCurrentImage(null);
+      }
+
+      toast({ title: '图片已删除', description: '文件和数据库记录已物理删除', variant: 'default' });
+      closePreview();
+    } catch (e: any) {
+      toast({ title: '删除失败', description: e.message || '请稍后重试', variant: 'error' });
+    }
   };
 
   const handleEditFromPanel = (img: ImageAsset) => {
@@ -632,7 +806,10 @@ export default function GrokStudio() {
               {leftSidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
             </Button>
 
-            <div className="font-medium tracking-tight">Grok Studio</div>
+            <div className="min-w-0">
+              <div className="font-medium tracking-tight">Grok Studio</div>
+              <ActiveBackendsBar settings={settings} />
+            </div>
           </div>
 
           <div className="flex items-center gap-2 text-sm text-zinc-400">
@@ -746,7 +923,7 @@ export default function GrokStudio() {
               {currentImage && (
                 <div className="border-t border-zinc-800 p-4 text-xs bg-zinc-950 sticky bottom-0">
                   <div>当前选中: {currentImage.prompt.slice(0,50)}...</div>
-                  <Button className="w-full mt-2" onClick={() => { handleEditFromPanel(currentImage); setMobileTab('chat'); }}>继续编辑</Button>
+                  <Button className="w-full mt-2" disabled={!canEditImages} onClick={() => { handleEditFromPanel(currentImage); setMobileTab('chat'); }}>继续编辑</Button>
                 </div>
               )}
             </div>
@@ -800,13 +977,13 @@ export default function GrokStudio() {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     if (currentImage) {
-                      editImage(currentImage, input.trim());
+                      if (canEditImages) editImage(currentImage, input.trim());
                     } else {
                       sendChatMessage();
                     }
                   }
                 }}
-                disabled={isStreaming || isGenerating || !currentConvId}
+                disabled={isStreaming || imageBusy || !currentConvId}
               />
               <div className="absolute right-2 bottom-2 flex gap-1">
                 <Button
@@ -814,7 +991,7 @@ export default function GrokStudio() {
                   variant="ghost"
                   className="h-8 px-3 text-xs"
                   onClick={() => generateImage()}
-                  disabled={!input.trim() || isGenerating || !currentConvId}
+                  disabled={!input.trim() || imageBusy || !currentConvId}
                 >
                   <ImageIcon className="w-4 h-4 mr-1" /> 生成图片
                 </Button>
@@ -824,14 +1001,15 @@ export default function GrokStudio() {
                     variant="ghost"
                     className="h-8 px-3 text-xs"
                     onClick={() => editImage(currentImage, input.trim() || '继续优化')}
-                    disabled={isGenerating || !currentConvId}
+                    disabled={imageBusy || !currentConvId || !canEditImages}
+                    title={canEditImages ? (activeBackends.generate.supportsEdit ? '改图' : `改图走 ${activeBackends.edit.label}（生图后端不支持编辑）`) : (activeBackends.edit.reason || '不支持改图')}
                   >
                     <Edit3 className="w-4 h-4 mr-1" /> 改图
                   </Button>
                 )}
               </div>
             </div>
-            {(isStreaming || isGenerating) ? (
+            {(isStreaming || imageBusy) ? (
               <Button 
                 className="h-12 px-6" 
                 variant="destructive"
@@ -843,14 +1021,21 @@ export default function GrokStudio() {
               <Button 
                 className="h-12 px-6" 
                 onClick={() => currentImage ? editImage(currentImage, input.trim()) : sendChatMessage()}
-                disabled={(!input.trim() && !currentImage) || isStreaming || isGenerating || !currentConvId}
+                disabled={(!input.trim() && !currentImage) || isStreaming || imageBusy || !currentConvId || (!!currentImage && !canEditImages)}
               >
                 <Send className="w-4 h-4" />
               </Button>
             )}
           </div>
           <div className="text-[10px] text-zinc-500 mt-1.5 px-1">
-            Enter 发送 · Shift+Enter 换行 · 选中图片后可继续编辑
+            Enter 发送 · Shift+Enter 换行
+            {currentImage && canEditImages && !activeBackends.generate.supportsEdit
+              ? ` · 改图使用 ${activeBackends.edit.model}（${activeBackends.edit.label}）`
+              : currentImage && canEditImages
+                ? ' · 选中图片后可继续编辑'
+                : currentImage && !canEditImages
+                  ? ` · ${activeBackends.edit.reason || '当前后端不能改图'}`
+                  : ' · 选中图片后可继续编辑'}
           </div>
         </div>
       </div>
@@ -868,6 +1053,8 @@ export default function GrokStudio() {
           onPreview={handlePreview}
           conversationId={currentConvId}
           onRetryImage={retryImage}
+          canEdit={canEditImages}
+          editHint={!activeBackends.generate.supportsEdit ? `改图走 ${activeBackends.edit.label}` : undefined}
         />
       </div>
 
@@ -907,71 +1094,344 @@ export default function GrokStudio() {
               onUpload={handleUpload}
               onPreview={handlePreview}
               conversationId={currentConvId}
+              canEdit={canEditImages}
+              editHint={!activeBackends.generate.supportsEdit ? `改图走 ${activeBackends.edit.label}` : undefined}
             />
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* 大图预览 Dialog */}
-      <Dialog open={!!previewImage} onOpenChange={(open) => !open && closePreview()}>
-        <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 bg-zinc-950 border-zinc-800">
+      {/* 大图预览 Dialog - Header / 主预览区 / Footer 结构，图片严格适应剩余空间 */}
+      <Dialog
+        open={!!previewImage}
+        onOpenChange={(open) => {
+          if (!open) closePreview();
+        }}
+      >
+        <DialogContent
+          showCloseButton={false}
+          className="
+            flex h-[100dvh] w-[100vw] max-w-none flex-col gap-0
+            overflow-hidden rounded-none border-0 bg-zinc-950 p-0
+            sm:h-[min(92dvh,980px)] sm:w-[min(96vw,1680px)]
+            sm:max-w-[96vw] sm:rounded-xl sm:border sm:border-zinc-800
+          "
+        >
           {previewImage && (
-            <div className="flex flex-col h-[90vh]">
-              {/* 顶部工具栏 */}
-              <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-                <div className="text-sm text-zinc-400">
-                  {previewIndex + 1} / {images.length}
+            <>
+              {/* Header：固定，不覆盖图片 */}
+              <header
+                className="
+                  z-30 flex shrink-0 items-center justify-between gap-2
+                  border-b border-zinc-800 bg-zinc-950/95 px-3 py-2
+                  backdrop-blur-md sm:px-4
+                "
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium tabular-nums text-zinc-200">
+                    {previewIndex + 1}
+                    <span className="mx-1 text-zinc-600">/</span>
+                    {images.length}
+                  </div>
+                  <p className="hidden max-w-[38vw] truncate text-xs text-zinc-500 md:block">
+                    {previewImage.model}
+                    {previewImage.resolution ? ` · ${previewImage.resolution}` : ""}
+                    {previewImage.aspect_ratio ? ` · ${previewImage.aspect_ratio}` : ""}
+                  </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => changePreview(-1)} disabled={images.length <= 1}>
-                    <ChevronLeft className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => changePreview(1)} disabled={images.length <= 1}>
-                    <ChevronRight className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => {
-                    const fullUrl = `/api/files/${previewImage.file_path}`;
-                    const a = document.createElement('a');
-                    a.href = fullUrl;
-                    a.download = `${previewImage.prompt.slice(0,30)}.png`;
-                    a.click();
-                  }}>
-                    <Download className="w-4 h-4 mr-1" /> 下载
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(previewImage.prompt)}>
-                    <Copy className="w-4 h-4 mr-1" /> 复制 Prompt
-                  </Button>
-                  <Button variant="ghost" size="icon" onClick={closePreview}>
-                    <X className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
 
-              {/* 大图区域 */}
-              <div className="flex-1 flex items-center justify-center bg-black p-4 overflow-auto">
-                <img 
-                  src={`/api/files/${previewImage.file_path}`} 
-                  alt={previewImage.prompt}
-                  className="max-w-full max-h-full object-contain"
-                />
-              </div>
+                {/* 桌面快捷切图；移动端支持滑动 */}
+                <div className="flex shrink-0 items-center gap-1">
+                  <div className="hidden items-center gap-1 sm:flex">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => changePreview(-1)}
+                      disabled={images.length <= 1}
+                      aria-label="上一张图片"
+                      title="上一张（←）"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
 
-              {/* 底部信息 */}
-              <div className="p-4 border-t border-zinc-800 bg-zinc-950 text-sm">
-                <div className="line-clamp-3 text-zinc-300 mb-3">{previewImage.prompt}</div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1 text-xs text-zinc-500">
-                  <div>模型：{previewImage.model}</div>
-                  <div>比例：{previewImage.aspect_ratio}</div>
-                  <div>分辨率：{previewImage.resolution}</div>
-                  <div>尺寸：{previewImage.width} × {previewImage.height}</div>
-                  <div>类型：{previewImage.kind}</div>
-                  <div>时间：{new Date(previewImage.created_at).toLocaleString()}</div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => changePreview(1)}
+                      disabled={images.length <= 1}
+                      aria-label="下一张图片"
+                      title="下一张（→）"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* 下载高频操作外露 */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1.5 px-2 text-zinc-300"
+                    onClick={() => {
+                      const fullUrl = `/api/files/${previewImage.file_path}`;
+                      const a = document.createElement("a");
+                      a.href = fullUrl;
+                      a.download = `${previewImage.prompt.slice(0, 30) || "image"}.png`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                    }}
+                  >
+                    <Download className="h-4 w-4" />
+                    <span className="hidden sm:inline">下载</span>
+                  </Button>
+
+                  {/* 低频操作收进更多菜单 */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label="更多图片操作"
+                        />
+                      }
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </DropdownMenuTrigger>
+
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuItem
+                        onClick={async () => {
+                          const text = previewImage.prompt || '';
+                          try {
+                            if (navigator.clipboard?.writeText) {
+                              await navigator.clipboard.writeText(text);
+                            } else {
+                              const ta = document.createElement('textarea');
+                              ta.value = text;
+                              ta.setAttribute('readonly', '');
+                              ta.style.position = 'fixed';
+                              ta.style.left = '-9999px';
+                              document.body.appendChild(ta);
+                              ta.select();
+                              document.execCommand('copy');
+                              document.body.removeChild(ta);
+                            }
+                            toast({ title: '已复制 Prompt' });
+                          } catch {
+                            toast({ title: '复制失败', variant: 'error' });
+                          }
+                        }}
+                      >
+                        <Copy className="mr-2 h-4 w-4" />
+                        复制 Prompt
+                      </DropdownMenuItem>
+
+                      <DropdownMenuItem onClick={() => setIsNSFW(!isNSFW)}>
+                        <ShieldAlert className="mr-2 h-4 w-4" />
+                        {isNSFW ? "取消 NSFW 标记" : "标记为 NSFW"}
+                      </DropdownMenuItem>
+
+                      <DropdownMenuSeparator />
+
+                      <DropdownMenuItem
+                        className="text-red-400 focus:text-red-300"
+                        onClick={handleDeletePreviewImage}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        删除图片
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={closePreview}
+                    aria-label="关闭预览"
+                    title="关闭（Esc）"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
                 </div>
-                {previewImage.parent_image_id && (
-                  <div className="mt-2 text-emerald-400 text-xs">此图由另一张图片编辑而来</div>
+              </header>
+
+              {/* 图片主区：拥有剩余全部空间 */}
+              <main
+                className="
+                  relative min-h-0 flex-1 overflow-hidden bg-black
+                  touch-pan-y select-none
+                "
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+              >
+                <div className="group relative flex h-full w-full items-center justify-center p-2 sm:p-4">
+                  <img
+                    key={previewImage.id}
+                    src={`/api/files/${previewImage.file_path}`}
+                    alt={previewImage.prompt || "图片预览"}
+                    draggable={false}
+                    className={`
+                      block max-h-full max-w-full select-none rounded-md
+                      object-contain shadow-2xl transition-[filter,opacity,transform] duration-200
+                      ${isNSFW ? "blur-2xl scale-105" : ""}
+                    `}
+                    style={{
+                      width: "auto",
+                      height: "auto",
+                    }}
+                    onClick={() => setShowImageDetails((value) => !value)}
+                  />
+
+                  {/* NSFW 提示独立覆盖 */}
+                  {isNSFW && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                      <div className="rounded-full border border-red-400/30 bg-red-950/85 px-4 py-2 text-sm font-medium text-red-100 shadow-xl backdrop-blur-md">
+                        NSFW · 图片已模糊
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 悬浮翻页按钮（桌面 hover 显示） */}
+                  {images.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => changePreview(-1)}
+                        className="
+                          absolute left-2 top-1/2 z-20 -translate-y-1/2
+                          rounded-full border border-white/10 bg-black/45 p-2.5
+                          text-white shadow-lg backdrop-blur-sm
+                          transition-all hover:bg-black/80
+                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
+                          sm:left-4 sm:opacity-0 sm:group-hover:opacity-100
+                        "
+                        aria-label="上一张图片"
+                      >
+                        <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => changePreview(1)}
+                        className="
+                          absolute right-2 top-1/2 z-20 -translate-y-1/2
+                          rounded-full border border-white/10 bg-black/45 p-2.5
+                          text-white shadow-lg backdrop-blur-sm
+                          transition-all hover:bg-black/80
+                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
+                          sm:right-4 sm:opacity-0 sm:group-hover:opacity-100
+                        "
+                        aria-label="下一张图片"
+                      >
+                        <ChevronRight className="h-5 w-5 sm:h-6 sm:w-6" />
+                      </button>
+                    </>
+                  )}
+
+                  {/* 点击提示 */}
+                  {!showImageDetails && (
+                    <div
+                      className="
+                        pointer-events-none absolute bottom-3 left-1/2 hidden
+                        -translate-x-1/2 rounded-full bg-black/45 px-3 py-1.5
+                        text-xs text-zinc-300 opacity-0 backdrop-blur-sm
+                        transition-opacity group-hover:opacity-100 md:block
+                      "
+                    >
+                      点击图片查看详情
+                    </div>
+                  )}
+                </div>
+              </main>
+
+              {/* Footer：固定在正常流，展开只压缩主图区 */}
+              <footer className="z-30 shrink-0 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-md">
+                {!showImageDetails ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowImageDetails(true)}
+                    className="
+                      flex w-full items-center gap-3 px-3 py-2 text-left
+                      transition-colors hover:bg-zinc-900/80 sm:px-4
+                    "
+                    aria-expanded="false"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-xs text-zinc-400">
+                      {previewImage.prompt || "暂无 Prompt"}
+                    </span>
+                    <span className="flex shrink-0 items-center text-xs text-zinc-500">
+                      详情
+                      <ChevronUp className="ml-1 h-3.5 w-3.5" />
+                    </span>
+                  </button>
+                ) : (
+                  <div className="px-3 py-3 sm:px-4">
+                    <div className="mb-3 flex items-start gap-3">
+                      <p className="min-w-0 flex-1 text-sm leading-6 text-zinc-300 line-clamp-3">
+                        {previewImage.prompt || "暂无 Prompt"}
+                      </p>
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 shrink-0 px-2 text-xs text-zinc-400"
+                        onClick={() => setShowImageDetails(false)}
+                      >
+                        收起
+                        <ChevronDown className="ml-1 h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
+                      <div>
+                        <span className="text-zinc-600">模型</span>
+                        <p className="truncate text-zinc-400">{previewImage.model || "-"}</p>
+                      </div>
+
+                      <div>
+                        <span className="text-zinc-600">比例</span>
+                        <p className="text-zinc-400">{previewImage.aspect_ratio || "-"}</p>
+                      </div>
+
+                      <div>
+                        <span className="text-zinc-600">分辨率</span>
+                        <p className="text-zinc-400">{previewImage.resolution || "-"}</p>
+                      </div>
+
+                      <div>
+                        <span className="text-zinc-600">像素尺寸</span>
+                        <p className="text-zinc-400">
+                          {previewImage.width} × {previewImage.height}
+                        </p>
+                      </div>
+
+                      <div>
+                        <span className="text-zinc-600">类型</span>
+                        <p className="truncate text-zinc-400">{previewImage.kind || "-"}</p>
+                      </div>
+
+                      <div>
+                        <span className="text-zinc-600">生成时间</span>
+                        <p className="truncate text-zinc-400">
+                          {new Date(previewImage.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+
+                    {previewImage.parent_image_id && (
+                      <div className="mt-3 text-xs text-emerald-400">
+                        此图由另一张图片编辑而来
+                      </div>
+                    )}
+                  </div>
                 )}
-              </div>
-            </div>
+              </footer>
+            </>
           )}
         </DialogContent>
       </Dialog>

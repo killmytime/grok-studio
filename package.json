@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "next dev -H ::",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H ::",
     "lint": "eslint",
-    "test": "vitest"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "gateway": "node gateway/server.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
