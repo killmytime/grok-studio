@@ -2,7 +2,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
 import { join } from 'path';
-import { writeFileSync, mkdirSync } from 'fs';
 import {
   enqueueJob,
   getJob,
@@ -14,8 +13,6 @@ import { startGateway, resetQueue as resetServerQueue, setInferHook as setServer
 
 const TINY_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-
-const SCRATCH = '/var/folders/_b/_5gjqg417y193jm43ndg9ft00000gp/T/grok-goal-932b5d22377c/implementer';
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -207,15 +204,8 @@ describe('Jetson gateway process boot', () => {
         (j) => j.status === 'completed' || j.status === 'failed'
       );
       expect(finished.status).toBe('completed');
-
-      mkdirSync(SCRATCH, { recursive: true });
-      writeFileSync(join(SCRATCH, 'gateway.log'), logChunks.join('') + `\nhealth=${JSON.stringify(health)}\njob=${JSON.stringify(finished)}\n`);
     } catch (e: any) {
-      mkdirSync(SCRATCH, { recursive: true });
-      writeFileSync(
-        join(SCRATCH, 'gateway-launch-error.log'),
-        `${logChunks.join('')}\n${e?.stack || e?.message || e}`
-      );
+      e.message = `${e?.message || e}\n--- gateway log ---\n${logChunks.join('')}`;
       throw e;
     } finally {
       if (child && child.pid) {
