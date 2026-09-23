@@ -39,6 +39,7 @@ yarn-error.log*
 
 # local data
 /data/
+/docs/demo-data/
 /gateway/.scratch/
 /tests/.tmp*
 

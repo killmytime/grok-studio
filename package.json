@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "gateway": "node gateway/server.mjs"
+    "gateway": "node gateway/server.mjs",
+    "docs:demo": "node scripts/seed-demo.mjs && node scripts/screenshot-docs.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
