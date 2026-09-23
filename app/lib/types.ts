@@ -1,3 +1,5 @@
+import type { ActiveBackends } from './integrations/catalog';
+
 export interface Conversation {
   id: string;
   title: string;
@@ -45,6 +47,10 @@ export interface ImageAsset {
   extra_json?: Record<string, any> | null;
 }
 
+export interface GalleryImage extends ImageAsset {
+  conversation_title: string | null;
+}
+
 export interface AppSettings {
   base_url: string;
   api_key: string;
@@ -76,10 +82,5 @@ export interface AppSettings {
   resolved_image_generate_base_url?: string;
   resolved_image_edit_base_url?: string;
   custom_system_prompt?: string;
-  active?: {
-    chat: { integration: string; label: string; model: string; capabilities: string[] };
-    generate: { integration: string; label: string; model: string; capabilities: string[]; supportsEdit: boolean };
-    edit: { integration: string; label: string; model: string; capabilities: string[]; available: boolean; reason?: string };
-    speech?: { integration: string; label: string; model: string; capabilities: string[]; available: boolean; reason?: string };
-  };
+  active?: ActiveBackends;
 }

@@ -4,13 +4,11 @@ import { useState, useEffect, useRef } from 'react';
 import ConversationList from './components/ConversationList';
 import MessageItem from './components/MessageItem';
 import ImagePanel from './components/ImagePanel';
-import ImageCard from './components/ImageCard';
 import SettingsDrawer from './components/SettingsDrawer';
 import ActiveBackendsBar from './components/ActiveBackendsBar';
 import { describeFromSettings } from './lib/integrations/catalog';
 import { formatElapsedMs } from './lib/format-elapsed';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -20,10 +18,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy, Menu, Image, MessageCircle, ChevronDown, ChevronUp, Trash2, MoreHorizontal, ShieldAlert } from 'lucide-react';
+import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy, Menu, Image, MessageCircle, ChevronDown, ChevronUp, Trash2, MoreHorizontal, ShieldAlert, Images } from 'lucide-react';
 import type { Conversation, Message, ImageAsset, AppSettings } from './lib/types';
 import { useToast } from '@/components/ui/toast';
+import Link from 'next/link';
+
+const resumingUserTurns = new Set<string>();
 
 export default function GrokStudio() {
   const { toast } = useToast();
@@ -61,12 +61,13 @@ export default function GrokStudio() {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
   const [mobileTab, setMobileTab] = useState<'chat' | 'images'>('chat');
   const [showConvDialog, setShowConvDialog] = useState(false);
-  const [showImageDialog, setShowImageDialog] = useState(false);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const imageAbortRef = useRef<AbortController | null>(null);
   const imagePollRef = useRef<Set<string>>(new Set());
+  const messagePollRef = useRef<Set<string>>(new Set());
+  const deepLinkImg = useRef(false);
   const imageBusy = isGenerating || images.some(i => i.status === 'pending');
   const activeBackends = settings.active || describeFromSettings(settings);
   const canEditImages = !!activeBackends.edit.available;
@@ -79,7 +80,7 @@ export default function GrokStudio() {
 
   useEffect(() => {
     if (currentConvId) {
-      loadMessages(currentConvId);
+      loadMessages(currentConvId, { resume: true });
       loadImages(currentConvId);
     } else {
       setMessages([]);
@@ -87,6 +88,18 @@ export default function GrokStudio() {
       setCurrentImage(null);
     }
   }, [currentConvId]);
+
+  useEffect(() => {
+    if (deepLinkImg.current || !images.length) return;
+    const imgId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('img') : null;
+    if (!imgId) return;
+    const idx = images.findIndex((i) => i.id === imgId);
+    if (idx < 0) return;
+    deepLinkImg.current = true;
+    setCurrentImage(images[idx]);
+    setPreviewIndex(idx);
+    setPreviewImage(images[idx]);
+  }, [images]);
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -98,17 +111,79 @@ export default function GrokStudio() {
     const res = await fetch('/api/conversations');
     const data = await res.json();
     setConversations(data);
-    if (data.length > 0 && !currentConvId) {
-      setCurrentConvId(data[0].id);
-    }
+    const wanted = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('c') : null;
+    setCurrentConvId((prev) => {
+      if (wanted && data.some((x: Conversation) => x.id === wanted)) return wanted;
+      if (prev) return prev;
+      return data[0]?.id ?? null;
+    });
   }
 
-  async function loadMessages(convId: string) {
+  async function loadMessages(convId: string, opts?: { resume?: boolean }) {
     const res = await fetch(`/api/conversations/${convId}/messages`);
     const data = await res.json();
     setMessages(data);
     setMessageDisplayLimit(20); // 默认只显示最近20条，避免长对话卡顿
     scrollToBottom();
+    if (opts?.resume) void resumeIncompleteChat(convId, data);
+  }
+
+  async function pollMessageUntilDone(convId: string, messageId: string) {
+    if (messagePollRef.current.has(messageId)) return;
+    messagePollRef.current.add(messageId);
+    setIsStreaming(true);
+    try {
+      for (let i = 0; i < 300; i++) {
+        const res = await fetch(`/api/conversations/${convId}/messages`);
+        if (!res.ok) break;
+        const data: Message[] = await res.json();
+        const msg = data.find((m) => m.id === messageId);
+        if (!msg) return;
+        setMessages(data);
+        if (msg.status === 'completed') {
+          await loadConversations();
+          return;
+        }
+        if (msg.status === 'error') {
+          if (msg.error_message && msg.error_message !== '已中断') {
+            toast({ title: '聊天失败', description: msg.error_message, variant: 'error' });
+          }
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    } finally {
+      messagePollRef.current.delete(messageId);
+      setIsStreaming(false);
+    }
+  }
+
+  async function resumeIncompleteChat(convId: string, data: Message[]) {
+    const pending = data.filter((m) => m.role === 'assistant' && m.status === 'pending');
+    for (const m of pending) {
+      void fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: convId, pendingMessageId: m.id }),
+      }).then(async (res) => {
+        const type = res.headers.get('content-type') || '';
+        if (type.includes('event-stream') && res.body) {
+          await res.body.pipeTo(new WritableStream()).catch(() => {});
+        }
+      }).catch(() => {});
+      void pollMessageUntilDone(convId, m.id);
+    }
+    if (pending.length) return;
+
+    const last = data[data.length - 1];
+    if (!last || last.role !== 'user' || last.status === 'error') return;
+    if (resumingUserTurns.has(last.id)) return;
+    resumingUserTurns.add(last.id);
+    try {
+      await streamAssistant(convId);
+    } finally {
+      resumingUserTurns.delete(last.id);
+    }
   }
 
   async function loadImages(convId: string) {
@@ -171,152 +246,142 @@ export default function GrokStudio() {
     }
   }
 
-  async function sendChatMessage() {
-    if (!input.trim() || !currentConvId) return;
-
-    const userContent = input.trim();
-    setInput('');
-
-    // 1. 保存用户消息
-    await fetch(`/api/conversations/${currentConvId}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'user', content: userContent }),
-    });
-
-    // 2. 创建 pending 的 assistant 消息
-    const pendingRes = await fetch(`/api/conversations/${currentConvId}/messages`, {
+  async function streamAssistant(convId: string) {
+    const pendingRes = await fetch(`/api/conversations/${convId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role: 'assistant', content: '', status: 'pending' }),
     });
+    if (!pendingRes.ok) throw new Error('无法创建回复');
     const pendingMsg = await pendingRes.json();
-
-    // 3. 乐观更新
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      conversation_id: currentConvId,
-      role: 'user',
-      content: userContent,
-      created_at: new Date().toISOString(),
-      status: 'completed',
-    };
-
-    const assistantPlaceholder: Message = {
-      ...pendingMsg,
-      status: 'pending',
-    };
-
-    setMessages(prev => [...prev, userMsg, assistantPlaceholder]);
+    setMessages(prev => [...prev, { ...pendingMsg, status: 'pending' as const }]);
     scrollToBottom();
 
-    // 4. 调用流式接口
     setIsStreaming(true);
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     try {
-      const history = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
-
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          conversation_id: currentConvId,
-          messages: history,
+          conversation_id: convId,
           pendingMessageId: pendingMsg.id,
         }),
         signal: controller.signal,
       });
 
-      if (!res.ok || !res.body) throw new Error('Chat failed');
+      const type = res.headers.get('content-type') || '';
+      if (!type.includes('event-stream') || !res.body) {
+        if (!res.ok) throw new Error('Chat failed');
+        await pollMessageUntilDone(convId, pendingMsg.id);
+        await loadMessages(convId);
+        return;
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let assistantText = '';
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const payload = line.slice(6).trim();
-            if (payload === '[DONE]') continue;
-            try {
-              const json = JSON.parse(payload);
-              const delta = json.choices?.[0]?.delta?.content || '';
-              if (delta) {
-                assistantText += delta;
-                setMessages(prev =>
-                  prev.map(m =>
-                    m.id === pendingMsg.id
-                      ? { ...m, content: assistantText, status: 'pending' as const }
-                      : m
-                  )
-                );
-                scrollToBottom();
-              }
-            } catch {}
-          }
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try {
+            const json = JSON.parse(payload);
+            const delta = json.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              assistantText += delta;
+              setMessages(prev =>
+                prev.map(m =>
+                  m.id === pendingMsg.id
+                    ? { ...m, content: assistantText, status: 'pending' as const }
+                    : m
+                )
+              );
+              scrollToBottom();
+            }
+          } catch {}
         }
       }
 
-      await loadMessages(currentConvId);
+      await loadMessages(convId);
+      await loadConversations();
     } catch (e: any) {
+      // 关页/断网只中断了浏览器连接，服务端还在写。不要把 pending 标成失败。
+      await pollMessageUntilDone(convId, pendingMsg.id);
+      await loadMessages(convId);
       if (e.name !== 'AbortError') {
-        toast({
-          title: '聊天失败',
-          description: e.message,
-          variant: 'error',
-        });
-        await fetch(`/api/conversations/${currentConvId}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            role: 'assistant',
-            content: '',
-            status: 'error',
-            error_message: e.message,
-          }),
-        });
-        await loadMessages(currentConvId);
+        const still = (await fetch(`/api/conversations/${convId}/messages`).then(r => r.json()).catch(() => [])) as Message[];
+        const msg = still.find((m) => m.id === pendingMsg.id);
+        if (msg?.status === 'error') {
+          toast({
+            title: '聊天失败',
+            description: msg.error_message || e.message,
+            variant: 'error',
+          });
+        }
       }
     } finally {
       setIsStreaming(false);
       abortControllerRef.current = null;
 
-      // 自动命名
-      if (currentConvId) {
-        const conv = conversations.find(c => c.id === currentConvId);
-        if (conv && conv.title === '新会话') {
-          setTimeout(async () => {
-            try {
-              const res = await fetch(`/api/conversations/${currentConvId}/summarize`, {
-                method: 'POST',
+      const conv = conversations.find(c => c.id === convId);
+      if (conv && conv.title === '新会话') {
+        setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/conversations/${convId}/summarize`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                prompt: '用 8-12 个字为这个对话取一个简短标题，不要引号，直接输出标题。',
+              }),
+            });
+            const data = await res.json();
+            if (data.summary) {
+              await fetch(`/api/conversations/${convId}`, {
+                method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  messages: messages.slice(0, 8),
-                  prompt: '用 8-12 个字为这个对话取一个简短标题，不要引号，直接输出标题。'
-                })
+                body: JSON.stringify({ title: data.summary }),
               });
-              const data = await res.json();
-              if (data.summary) {
-                await fetch(`/api/conversations/${currentConvId}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ title: data.summary })
-                });
-                await loadConversations();
-              }
-            } catch (_) {}
-          }, 800);
-        }
+              await loadConversations();
+            }
+          } catch (_) {}
+        }, 800);
       }
     }
+  }
+
+  async function sendChatMessage() {
+    if (!input.trim() || !currentConvId || isStreaming) return;
+
+    const userContent = input.trim();
+    setInput('');
+
+    const userRes = await fetch(`/api/conversations/${currentConvId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'user', content: userContent }),
+    });
+    if (!userRes.ok) {
+      setInput(userContent);
+      toast({ title: '发送失败', variant: 'error' });
+      return;
+    }
+    const userMsg = await userRes.json();
+    setMessages(prev => [...prev, userMsg]);
+    await streamAssistant(currentConvId);
   }
 
   async function generateImage(promptOverride?: string) {
@@ -429,6 +494,15 @@ export default function GrokStudio() {
     if (imageAbortRef.current) {
       imageAbortRef.current.abort();
     }
+    messages
+      .filter((m) => m.role === 'assistant' && m.status === 'pending')
+      .forEach((m) => {
+        fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cancel: true, pendingMessageId: m.id }),
+        }).catch(() => {});
+      });
     const pending = images.filter(i => i.status === 'pending');
     pending.forEach(img => {
       fetch(`/api/images/${img.id}/cancel`, { method: 'POST' }).then(async res => {
@@ -447,45 +521,11 @@ export default function GrokStudio() {
     // Optionally remove the error one, but keep for now
   }
 
-  function buildContextForAPI(msgs: Message[], summary: string | null): any[] {
-    const MAX_RECENT = 14;
-    const KEEP_PREFIX = 3;
-
-    if (msgs.length <= MAX_RECENT + KEEP_PREFIX) {
-      return msgs.map(m => ({ role: m.role, content: m.content }));
-    }
-
-    const prefix = msgs.slice(0, KEEP_PREFIX).map(m => ({ role: m.role, content: m.content }));
-    const recent = msgs.slice(-MAX_RECENT).map(m => ({ role: m.role, content: m.content }));
-
-    if (summary) {
-      return [
-        ...prefix,
-        { role: 'system', content: `[对话摘要] ${summary}` },
-        ...recent
-      ];
-    }
-    return [...prefix, ...recent];
-  }
-
-  async function maybeTriggerSummarize(convId: string, currentMessages: Message[]) {
-    if (currentMessages.length < 28) return; // 阈值：超过28条才考虑摘要
-
-    // 避免频繁摘要，简单判断
+  async function maybeTriggerSummarize(convId: string) {
     try {
-      const res = await fetch(`/api/conversations/${convId}/summarize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: currentMessages }),
-      });
+      const res = await fetch(`/api/conversations/${convId}/summarize`, { method: 'POST' });
       const data = await res.json();
       if (data.summary) {
-        await fetch(`/api/conversations/${convId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ summary: data.summary }),
-        });
-        // 更新前端状态，让“查看记忆”按钮立即出现（自动摘要后也生效）
         setConversations(prev =>
           prev.map(c =>
             c.id === convId
@@ -493,9 +533,13 @@ export default function GrokStudio() {
               : c
           )
         );
+        toast({ title: '记忆已更新', variant: 'default' });
+      } else if (data.error) {
+        toast({ title: '摘要失败', description: data.error, variant: 'error' });
+      } else {
+        toast({ title: '还不用摘要', description: '对话还没长到需要压缩', variant: 'default' });
       }
     } catch (e) {
-      // 摘要失败不影响主流程
       console.warn('Summarize failed', e);
     }
   }
@@ -538,51 +582,23 @@ export default function GrokStudio() {
   }
 
   async function editMessage(messageId: string, newContent: string) {
-    if (!currentConvId) return;
-
-    // Update in DB
+    if (!currentConvId || isStreaming) return;
     await fetch(`/api/conversations/${currentConvId}/messages`, {
-      method: 'POST',
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'user', content: newContent, messageIdToUpdate: messageId }),
+      body: JSON.stringify({ messageId, content: newContent }),
     });
-
-    // Optimistic update + re-send
-    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, content: newContent } : m));
-    setInput(newContent);
-    setTimeout(() => {
-      sendChatMessage();
-    }, 100);
-  }
-
-  // Slash command + RP mode support
-  const [activeSystemPrompt, setActiveSystemPrompt] = useState<string | null>(null);
-
-  const SLASH_COMMANDS: Record<string, string> = {
-    '/rp': '你现在进入角色扮演模式。请用生动、沉浸式的语言回应，保持角色一致性。',
-    '/roleplay': '你现在进入角色扮演模式。请用生动、沉浸式的语言回应，保持角色一致性。',
-    '/qa': '你是一个严谨的问答助手。只回答用户的问题，不要添加多余的解释或闲聊。',
-    '/strict': '请保持极度严谨、客观，只基于已提供的信息回答。',
-  };
-
-  function parseSlashCommand(text: string): { command: string | null; cleanText: string; systemPrompt?: string } {
-    const trimmed = text.trim();
-    if (!trimmed.startsWith('/')) return { command: null, cleanText: text };
-
-    const firstSpace = trimmed.indexOf(' ');
-    const cmd = firstSpace === -1 ? trimmed.toLowerCase() : trimmed.slice(0, firstSpace).toLowerCase();
-    const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1);
-
-    if (cmd === '/summary' || cmd === '/summarize') {
-      if (currentConvId) maybeTriggerSummarize(currentConvId, messages);
-      return { command: cmd, cleanText: '' };
-    }
-
-    if (SLASH_COMMANDS[cmd]) {
-      return { command: cmd, cleanText: rest, systemPrompt: SLASH_COMMANDS[cmd] };
-    }
-
-    return { command: null, cleanText: text };
+    await fetch(`/api/conversations/${currentConvId}/messages`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageId, after: true }),
+    });
+    setMessages(prev => {
+      const idx = prev.findIndex(m => m.id === messageId);
+      if (idx === -1) return prev;
+      return [...prev.slice(0, idx), { ...prev[idx], content: newContent }];
+    });
+    await streamAssistant(currentConvId);
   }
 
   const handleSelectImage = (img: ImageAsset | null) => {
@@ -735,37 +751,39 @@ export default function GrokStudio() {
   };
 
   async function retryMessage(messageId: string) {
-    if (!currentConvId) return;
+    if (!currentConvId || isStreaming) return;
 
     const msgIndex = messages.findIndex(m => m.id === messageId);
     if (msgIndex === -1) return;
-
     const targetMsg = messages[msgIndex];
 
-    // 先删除这条消息
-    await fetch(`/api/conversations/${currentConvId}/messages`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageId }),
-    });
-    setMessages(prev => prev.filter(m => m.id !== messageId));
-
     if (targetMsg.role === 'assistant') {
-      // 重试 assistant 消息 → 重新发送上一条 user 消息
-      const prevUser = [...messages].slice(0, msgIndex).reverse().find(m => m.role === 'user');
-      if (prevUser) {
-        setInput(prevUser.content);
-        setTimeout(() => sendChatMessage(), 80);
-      }
+      await fetch(`/api/conversations/${currentConvId}/messages`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId, after: true }),
+      });
+      await fetch(`/api/conversations/${currentConvId}/messages`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId }),
+      });
+      setMessages(prev => prev.slice(0, msgIndex));
     } else {
-      // 重试 user 消息
-      setInput(targetMsg.content);
-      setTimeout(() => sendChatMessage(), 80);
+      await fetch(`/api/conversations/${currentConvId}/messages`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId, after: true }),
+      });
+      setMessages(prev => prev.slice(0, msgIndex + 1));
     }
+    await streamAssistant(currentConvId);
   }
 
+  const currentConv = conversations.find(c => c.id === currentConvId);
+
   return (
-    <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-200">
+    <div className="flex h-dvh overflow-hidden bg-zinc-950 text-zinc-200">
       {/* Left Sidebar: Conversations - Desktop collapsible, Mobile via Dialog */}
       <div 
         className={`hidden md:flex flex-col border-r border-zinc-800 transition-all duration-200 overflow-hidden ${leftSidebarOpen ? 'w-64' : 'w-0'}`}
@@ -786,18 +804,16 @@ export default function GrokStudio() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Bar */}
-        <div className="h-14 border-b border-zinc-800 flex items-center justify-between px-4">
-          <div className="flex items-center gap-2">
-            {/* Mobile: Open Conversations Dialog */}
+        <div className="h-12 md:h-14 border-b border-zinc-800 flex items-center justify-between gap-2 px-2 md:px-4">
+          <div className="flex items-center gap-1 md:gap-2 min-w-0">
             <Button 
               variant="ghost" 
               size="icon" 
-              className="md:hidden h-9 w-9" 
+              className="md:hidden h-9 w-9 shrink-0" 
               onClick={() => setShowConvDialog(true)}
             >
               <Menu className="w-5 h-5" />
             </Button>
-            {/* Desktop: Toggle left sidebar */}
             <Button 
               variant="ghost" 
               size="icon" 
@@ -808,48 +824,44 @@ export default function GrokStudio() {
             </Button>
 
             <div className="min-w-0">
-              <div className="font-medium tracking-tight">Grok Studio</div>
-              <ActiveBackendsBar settings={settings} />
+              <div className="font-medium tracking-tight text-sm md:text-base truncate">Grok Studio</div>
+              <div className="hidden md:block">
+                <ActiveBackendsBar settings={settings} />
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-sm text-zinc-400">
-            {currentConvId && <span className="hidden sm:inline">当前会话 #{currentConvId.slice(0, 8)}</span>}
+          <div className="flex items-center gap-1 md:gap-2 text-sm text-zinc-400 shrink-0">
+            <Link
+              href="/gallery"
+              className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 md:h-8"
+              title="画廊"
+            >
+              <Images className="h-4 w-4" />
+              <span className="hidden sm:inline">画廊</span>
+            </Link>
+            {currentConvId && <span className="hidden lg:inline">当前会话 #{currentConvId.slice(0, 8)}</span>}
             {currentConvId && messages.length > 20 && (
               <Button 
                 variant="ghost" 
                 size="sm" 
-                className="h-9 px-3 text-xs md:h-7 md:px-2 md:text-xs text-zinc-400 hover:text-zinc-200 active:bg-zinc-800"
-                onClick={() => maybeTriggerSummarize(currentConvId, messages)}
+                className="hidden md:inline-flex h-7 px-2 text-xs text-zinc-400 hover:text-zinc-200"
+                onClick={() => maybeTriggerSummarize(currentConvId)}
               >
                 手动摘要
               </Button>
             )}
-            {currentConvId && (() => {
-              const conv = conversations.find(c => c.id === currentConvId);
-              return conv?.summary ? (
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="h-9 px-3 text-xs md:h-7 md:px-2 md:text-xs text-amber-400 hover:text-amber-300"
-                  onClick={() => toast({ title: '当前记忆摘要', description: conv.summary, variant: 'default' })}
-                >
-                  查看记忆
-                </Button>
-              ) : null;
-            })()}
+            {currentConv?.summary ? (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-9 px-2 md:h-7 md:px-2 text-xs text-amber-400 hover:text-amber-300"
+                onClick={() => toast({ title: '当前记忆摘要', description: currentConv.summary, variant: 'default' })}
+              >
+                记忆
+              </Button>
+            ) : null}
             <SettingsDrawer settings={settings} onSave={saveSettings} onTest={testConnection} />
-            
-            {/* Mobile: Open Images Dialog */}
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="md:hidden h-9 w-9" 
-              onClick={() => setShowImageDialog(true)}
-            >
-              <Image className="w-5 h-5" />
-            </Button>
-            {/* Desktop: Toggle right sidebar */}
             <Button 
               variant="ghost" 
               size="icon" 
@@ -866,7 +878,7 @@ export default function GrokStudio() {
           {/* Desktop always shows chat; Mobile respects tab */}
           <div 
             ref={chatContainerRef} 
-            className={`flex-1 overflow-auto p-6 chat-container bg-zinc-950 ${mobileTab === 'images' ? 'hidden md:block' : 'block'}`}
+            className={`flex-1 overflow-auto p-3 md:p-6 chat-container bg-zinc-950 ${mobileTab === 'images' ? 'hidden md:block' : 'block'}`}
           >
             {!currentConvId && (
               <div className="h-full flex items-center justify-center text-zinc-500">选择或新建一个会话开始</div>
@@ -903,65 +915,32 @@ export default function GrokStudio() {
             {isStreaming && <div className="text-xs text-zinc-500 pl-4">正在生成回复...</div>}
           </div>
 
-          {/* Mobile Images View: show image panel content when tab=images */}
           {mobileTab === 'images' && (
-            <div className="flex-1 overflow-auto md:hidden border-t border-zinc-800">
-              <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-                <div className="font-semibold">图片资产 ({images.length})</div>
-                <Button size="sm" variant="ghost" onClick={() => setMobileTab('chat')}>返回聊天</Button>
-              </div>
-              <div className="p-3">
-                {images.length === 0 && (
-                  <div className="text-center text-sm text-zinc-500 py-12">本会话暂无图片<br />发送「生成图片」或上传开始</div>
-                )}
-                {images.map(img => (
-                  <div key={img.id} onClick={() => { handleSelectImage(img); setMobileTab('chat'); }} className={currentImage?.id === img.id ? 'ring-1 ring-blue-500 rounded-lg' : ''}>
-                    <ImageCard 
-                      image={img} 
-                      onEdit={handleEditFromPanel}
-                      onSetCurrent={handleSelectImage}
-                      onPreview={handlePreview}
-                      onRetry={retryImage}
-                      compact={true}
-                    />
-                  </div>
-                ))}
-              </div>
-              {currentImage && (
-                <div className="border-t border-zinc-800 p-4 text-xs bg-zinc-950 sticky bottom-0">
-                  <div>当前选中: {currentImage.prompt.slice(0,50)}...</div>
-                  <Button className="w-full mt-2" disabled={!canEditImages} onClick={() => { handleEditFromPanel(currentImage); setMobileTab('chat'); }}>继续编辑</Button>
-                </div>
-              )}
+            <div className="flex-1 min-h-0 overflow-hidden md:hidden">
+              <ImagePanel
+                images={images}
+                currentImage={currentImage}
+                onSelectImage={(img) => { handleSelectImage(img); if (img) setMobileTab('chat'); }}
+                onEditImage={handleEditFromPanel}
+                onUpload={handleUpload}
+                onPreview={handlePreview}
+                conversationId={currentConvId}
+                onRetryImage={retryImage}
+                canEdit={canEditImages}
+                editHint={!activeBackends.generate.supportsEdit ? `改图走 ${activeBackends.edit.label}` : undefined}
+              />
             </div>
           )}
         </div>
 
-        {/* Bottom Tab Bar - Mobile only */}
-        <div className="md:hidden border-t border-zinc-800 bg-zinc-950 flex">
-          <button
-            onClick={() => setMobileTab('chat')}
-            className={`flex-1 flex flex-col items-center py-2 text-xs ${mobileTab === 'chat' ? 'text-white bg-zinc-900' : 'text-zinc-400'}`}
-          >
-            <MessageCircle className="w-5 h-5 mb-0.5" /> 聊天
-          </button>
-          <button
-            onClick={() => setMobileTab('images')}
-            className={`flex-1 flex flex-col items-center py-2 text-xs ${mobileTab === 'images' ? 'text-white bg-zinc-900' : 'text-zinc-400'}`}
-          >
-            <Image className="w-5 h-5 mb-0.5" /> 图片
-          </button>
-        </div>
-
-        <div className="border-t border-zinc-800 p-4 bg-zinc-950">
-          {/* 比例快速选择器 */}
-          <div className="flex items-center gap-2 mb-2 px-1">
-            <div className="text-xs text-zinc-500 mr-1">比例：</div>
+        <div className={`border-t border-zinc-800 px-3 py-2 md:px-4 md:py-3 bg-zinc-950 ${mobileTab === 'images' ? 'hidden md:block' : 'block'}`}>
+          <div className="flex items-center gap-1.5 mb-2 overflow-x-auto">
+            <div className="text-xs text-zinc-500 shrink-0">比例</div>
             {['1:1', '16:9', '9:16', '4:3', '3:4'].map(ratio => (
               <button
                 key={ratio}
                 onClick={() => setSelectedAspect(ratio)}
-                className={`px-3 py-0.5 text-xs rounded-full border transition ${
+                className={`px-2.5 py-0.5 text-xs rounded-full border shrink-0 transition ${
                   selectedAspect === ratio 
                     ? 'bg-blue-600 border-blue-600 text-white' 
                     : 'border-zinc-700 hover:bg-zinc-800 text-zinc-400'
@@ -970,55 +949,52 @@ export default function GrokStudio() {
                 {ratio}
               </button>
             ))}
-            <div className="text-[10px] text-zinc-500 ml-2">· 默认 1k（节省额度）</div>
+            <div className="hidden sm:block text-[10px] text-zinc-500 ml-1 shrink-0">· 默认 1k</div>
           </div>
 
-          <div className="flex gap-2">
-            <div className="flex-1 relative">
-              <Textarea
-                className="chat-input min-h-[48px] max-h-[120px] text-base pl-4 pr-24 resize-y"
-                placeholder={currentImage ? `继续改这张图... (Shift+Enter 换行)` : "输入消息或图片描述 (Shift+Enter 换行)"}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (currentImage) {
-                      if (canEditImages) editImage(currentImage, input.trim());
-                    } else {
-                      sendChatMessage();
-                    }
-                  }
-                }}
-                disabled={isStreaming || imageBusy || !currentConvId}
-              />
-              <div className="absolute right-2 bottom-2 flex gap-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => generateImage()}
-                  disabled={!input.trim() || imageBusy || !currentConvId}
-                >
-                  <ImageIcon className="w-4 h-4 mr-1" /> 生成图片
-                </Button>
-                {currentImage && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 px-3 text-xs"
-                    onClick={() => editImage(currentImage, input.trim() || '继续优化')}
-                    disabled={imageBusy || !currentConvId || !canEditImages}
-                    title={canEditImages ? (activeBackends.generate.supportsEdit ? '改图' : `改图走 ${activeBackends.edit.label}（生图后端不支持编辑）`) : (activeBackends.edit.reason || '不支持改图')}
-                  >
-                    <Edit3 className="w-4 h-4 mr-1" /> 改图
-                  </Button>
-                )}
-              </div>
-            </div>
+          <Textarea
+            className="chat-input min-h-[44px] max-h-[120px] text-base px-3 py-2 md:min-h-[48px] resize-y"
+            placeholder={currentImage ? `继续改这张图... (Shift+Enter 换行)` : "输入消息或图片描述 (Shift+Enter 换行)"}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (currentImage) {
+                  if (canEditImages) editImage(currentImage, input.trim());
+                } else {
+                  sendChatMessage();
+                }
+              }
+            }}
+            disabled={isStreaming || imageBusy || !currentConvId}
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-9 px-2.5 text-xs"
+              onClick={() => generateImage()}
+              disabled={!input.trim() || imageBusy || !currentConvId}
+            >
+              <ImageIcon className="w-4 h-4 mr-1" /> 生图
+            </Button>
+            {currentImage && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-9 px-2.5 text-xs"
+                onClick={() => editImage(currentImage, input.trim() || '继续优化')}
+                disabled={imageBusy || !currentConvId || !canEditImages}
+                title={canEditImages ? (activeBackends.generate.supportsEdit ? '改图' : `改图走 ${activeBackends.edit.label}（生图后端不支持编辑）`) : (activeBackends.edit.reason || '不支持改图')}
+              >
+                <Edit3 className="w-4 h-4 mr-1" /> 改图
+              </Button>
+            )}
+            <div className="flex-1" />
             {(isStreaming || imageBusy) ? (
               <Button 
-                className="h-12 px-6" 
+                className="h-9 px-4" 
                 variant="destructive"
                 onClick={stopGeneration}
               >
@@ -1026,7 +1002,7 @@ export default function GrokStudio() {
               </Button>
             ) : (
               <Button 
-                className="h-12 px-6" 
+                className="h-9 px-4" 
                 onClick={() => currentImage ? editImage(currentImage, input.trim()) : sendChatMessage()}
                 disabled={(!input.trim() && !currentImage) || isStreaming || imageBusy || !currentConvId || (!!currentImage && !canEditImages)}
               >
@@ -1034,7 +1010,7 @@ export default function GrokStudio() {
               </Button>
             )}
           </div>
-          <div className="text-[10px] text-zinc-500 mt-1.5 px-1">
+          <div className="hidden md:block text-[10px] text-zinc-500 mt-1.5 px-1">
             Enter 发送 · Shift+Enter 换行
             {currentImage && canEditImages && !activeBackends.generate.supportsEdit
               ? ` · 改图使用 ${activeBackends.edit.model}（${activeBackends.edit.label}）`
@@ -1045,9 +1021,24 @@ export default function GrokStudio() {
                   : ' · 选中图片后可继续编辑'}
           </div>
         </div>
+
+        <div className="md:hidden border-t border-zinc-800 bg-zinc-950 flex pb-[env(safe-area-inset-bottom)]">
+          <button
+            onClick={() => setMobileTab('chat')}
+            className={`flex-1 flex flex-col items-center py-1.5 text-xs ${mobileTab === 'chat' ? 'text-white bg-zinc-900' : 'text-zinc-400'}`}
+          >
+            <MessageCircle className="w-5 h-5 mb-0.5" /> 聊天
+          </button>
+          <button
+            onClick={() => setMobileTab('images')}
+            className={`flex-1 flex flex-col items-center py-1.5 text-xs ${mobileTab === 'images' ? 'text-white bg-zinc-900' : 'text-zinc-400'}`}
+          >
+            <Image className="w-5 h-5 mb-0.5" /> 图片
+          </button>
+        </div>
       </div>
 
-      {/* Right Sidebar: Images - Desktop collapsible, Mobile via Dialog + Tab */}
+      {/* Right Sidebar: Images */}
       <div 
         className={`hidden md:flex flex-col border-l border-zinc-800 transition-all duration-200 overflow-hidden ${rightSidebarOpen ? 'w-[320px]' : 'w-0'}`}
       >
@@ -1082,27 +1073,6 @@ export default function GrokStudio() {
               onNew={() => { createNewConversation(); setShowConvDialog(false); }}
               onDelete={deleteConversation}
               onRename={renameConversation}
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showImageDialog} onOpenChange={setShowImageDialog}>
-        <DialogContent className="max-w-[95vw] p-0 bg-zinc-950 border-zinc-800 h-[85vh]">
-          <DialogHeader className="p-4 border-b border-zinc-800">
-            <DialogTitle>图片资产</DialogTitle>
-          </DialogHeader>
-          <div className="overflow-auto flex-1 p-3">
-            <ImagePanel
-              images={images}
-              currentImage={currentImage}
-              onSelectImage={(img) => { handleSelectImage(img); setShowImageDialog(false); setMobileTab('chat'); }}
-              onEditImage={handleEditFromPanel}
-              onUpload={handleUpload}
-              onPreview={handlePreview}
-              conversationId={currentConvId}
-              canEdit={canEditImages}
-              editHint={!activeBackends.generate.supportsEdit ? `改图走 ${activeBackends.edit.label}` : undefined}
             />
           </div>
         </DialogContent>
@@ -1227,7 +1197,7 @@ export default function GrokStudio() {
                               document.execCommand('copy');
                               document.body.removeChild(ta);
                             }
-                            toast({ title: '已复制 Prompt' });
+                            toast({ title: '已复制 Prompt', variant: 'success' });
                           } catch {
                             toast({ title: '复制失败', variant: 'error' });
                           }

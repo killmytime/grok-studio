@@ -266,6 +266,58 @@ describe('capability providers (shipped routes)', () => {
     expect(imageUp.requests.some(r => r.url.includes('/chat/completions'))).toBe(false);
   });
 
+  it('finishes the pending assistant even if the client drops the stream', async () => {
+    db.setSetting('chat_base_url', chatUp.baseUrl);
+    db.setSetting('chat_api_key', 'sk-chat-bearer');
+    const conv = db.createConversation('drop-client');
+    db.addMessage(conv.id, 'user', 'hi');
+    const pending = db.addMessage(conv.id, 'assistant', '', undefined, 'pending');
+
+    const res = await chatRoute.POST(new Request('http://localhost/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: conv.id, pendingMessageId: pending.id }),
+    }));
+    expect(res.status).toBe(200);
+    await res.body?.cancel();
+    for (let i = 0; i < 40; i++) {
+      const msg = db.getMessage(pending.id);
+      if (msg?.status === 'completed' && String(msg.content || '').includes('hello from chat')) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const msg = db.getMessage(pending.id);
+    expect(msg?.status).toBe('completed');
+    expect(String(msg?.content || '')).toContain('hello from chat');
+  });
+
+  it('chat sends stable summary prefix + first turns + recent tail when history is long', async () => {
+    db.setSetting('chat_base_url', chatUp.baseUrl);
+    db.setSetting('chat_api_key', 'sk-chat-bearer');
+    const conv = db.createConversation('long-chat-cache');
+    for (let i = 0; i < 24; i++) {
+      db.addMessage(conv.id, i % 2 ? 'assistant' : 'user', `turn-${i}`);
+    }
+    db.updateConversationSummary(conv.id, '角色是Vivian，正在海边');
+    chatUp.requests.length = 0;
+
+    const res = await chatRoute.POST(new Request('http://localhost/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: conv.id }),
+    }));
+    expect(res.status).toBe(200);
+    await drainStream(res);
+
+    const hit = chatUp.requests.find((r: any) => r.url.includes('/chat/completions') && r.body?.stream);
+    expect(hit).toBeTruthy();
+    const sent = hit!.body.messages;
+    expect(sent[0]).toEqual({ role: 'system', content: '[对话摘要]\n角色是Vivian，正在海边' });
+    expect(sent[1].content).toBe('turn-0');
+    expect(sent.at(-1).content).toBe('turn-23');
+    expect(sent).toHaveLength(1 + 3 + 16);
+    expect(sent.some((m: any) => m.content === 'turn-3')).toBe(false);
+  });
+
   it('Ollama chat succeeds with empty API key', async () => {
     db.setSetting('chat_provider', 'ollama');
     db.setSetting('chat_base_url', chatUp.baseUrl);
@@ -306,13 +358,16 @@ describe('capability providers (shipped routes)', () => {
     expect(imageUp.requests.some(r => r.url.includes('/chat/completions'))).toBe(false);
 
     chatUp.requests.length = 0;
-    const many = Array.from({ length: 16 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` }));
+    const sumConv = db.createConversation('summarize-backend');
+    for (let i = 0; i < 24; i++) {
+      db.addMessage(sumConv.id, i % 2 ? 'assistant' : 'user', `m${i}`);
+    }
     const sumReq = new Request('http://localhost/api/conversations/x/summarize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: many }),
+      body: JSON.stringify({}),
     });
-    const sumRes = await summarizeRoute.POST(sumReq, { params: Promise.resolve({ id: convId }) });
+    const sumRes = await summarizeRoute.POST(sumReq, { params: Promise.resolve({ id: sumConv.id }) });
     const sumData = await sumRes.json();
     expect(sumRes.status).toBe(200);
     expect(sumData.summary).toBeTruthy();

@@ -143,7 +143,7 @@ export function addOrReplaceVendorModel(
 ): Vendor {
   const vendor = getVendor(vendorId);
   if (!vendor) throw new Error('vendor not found');
-  const models = vendor.models
+  const models: Array<{ model: string; capabilities: Capability[]; extra?: Record<string, unknown> }> = vendor.models
     .filter((m) => m.model !== model.model)
     .map((m) => ({ model: m.model, capabilities: m.capabilities, extra: m.extra || undefined }));
   models.push(model);

@@ -1,5 +1,4 @@
 import { readFileSync, existsSync } from 'fs';
-import { File } from 'node:buffer';
 import { bearerHeaders, resolveSpeechBackend, ttsServiceRoot, type SpeechBackend } from '../backends';
 import { speakerPtAbs } from '../audio';
 
@@ -103,7 +102,7 @@ export async function openSpeechStream(opts: {
       if (!Number.isNaN(n)) form.set('seed', String(n));
     }
     const ptBuf = readFileSync(/* turbopackIgnore: true */ ptAbs);
-    form.set('voice_clone_pt', new File([ptBuf], 'speaker.pt', { type: 'application/octet-stream' }));
+    form.set('voice_clone_pt', new Blob([new Uint8Array(ptBuf)], { type: 'application/octet-stream' }), 'speaker.pt');
     res = await fetch(`${root}/v1/audio/speech`, { method: 'POST', headers: auth, body: form });
   } else {
     const body: Record<string, unknown> = {
@@ -141,7 +140,7 @@ export async function cloneSpeakerPt(opts: {
 }): Promise<Buffer> {
   const root = ttsServiceRoot(opts.backend.baseUrl);
   const form = new FormData();
-  form.set('ref_audio', new File([opts.refAudio], 'ref_audio.wav', { type: 'audio/wav' }));
+  form.set('ref_audio', new Blob([new Uint8Array(opts.refAudio)], { type: 'audio/wav' }), 'ref_audio.wav');
   form.set('filename', opts.filename || 'speaker.pt');
   const headers: Record<string, string> = {};
   if (opts.backend.apiKey) headers.Authorization = `Bearer ${opts.backend.apiKey}`;

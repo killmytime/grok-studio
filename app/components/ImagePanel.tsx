@@ -40,7 +40,7 @@ export default function ImagePanel({ images, currentImage, onSelectImage, onEdit
   };
 
   return (
-    <div className="image-sidebar w-[320px] flex flex-col h-full border-l border-zinc-800">
+    <div className="image-sidebar w-full min-w-0 flex flex-col h-full">
       <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
         <div>
           <div className="font-semibold">图片资产</div>

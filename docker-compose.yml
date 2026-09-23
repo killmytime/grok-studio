@@ -6,10 +6,12 @@ services:
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
-      - HOSTNAME=::
+      - HOSTNAME=0.0.0.0
+    env_file:
+      - path: .env.local
+        required: false
+    # Host files are owned by the Mac user; root can write the bind-mounted SQLite/WAL.
+    user: "0:0"
     volumes:
-      - grok-data:/app/data
+      - ./data:/app/data
     restart: unless-stopped
-
-volumes:
-  grok-data:

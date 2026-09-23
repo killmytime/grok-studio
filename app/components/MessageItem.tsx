@@ -234,6 +234,14 @@ export default function MessageItem({ message, onRetry, onDelete, onEdit, canSpe
                 编辑
               </button>
             )}
+            {!isUser && onRetry && message.status !== 'pending' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onRetry(message.id); }}
+                className="text-[10px] px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 rounded"
+              >
+                重试
+              </button>
+            )}
             {onDelete && (
               <button
                 onClick={(e) => {

@@ -20,7 +20,7 @@ export function messageAudioAbsPath(messageId: string) {
 }
 
 export function audioFileExists(relPath: string) {
-  return existsSync(/* turbopackIgnore: true */ join(DATA_DIR, relPath));
+  return existsSync(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ DATA_DIR, relPath));
 }
 
 export function openAudioWrite(messageId: string): { rel: string; abs: string; stream: WriteStream } {

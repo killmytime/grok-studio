@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { join } from 'path';
 import { mkdirSync, existsSync, unlinkSync } from 'fs';
-import type { Message, ImageAsset } from './types';
+import type { Message, ImageAsset, GalleryImage } from './types';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 const DB_PATH = join(DATA_DIR, 'grok-studio.db');
@@ -285,6 +285,62 @@ export function listImages(convId: string) {
   return rows.map(r => parseImageRow(r)!) as ImageAsset[];
 }
 
+export function listAllImages(opts?: {
+  kind?: string;
+  conversation_id?: string;
+  q?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): { images: GalleryImage[]; total: number } {
+  const db = getDb();
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (opts?.kind) {
+    where.push('i.kind = ?');
+    params.push(opts.kind);
+  }
+  if (opts?.conversation_id) {
+    where.push('i.conversation_id = ?');
+    params.push(opts.conversation_id);
+  }
+  if (opts?.status && opts.status !== 'all') {
+    where.push('i.status = ?');
+    params.push(opts.status);
+  } else if (!opts?.status) {
+    where.push("(i.status IS NULL OR i.status = 'completed')");
+  }
+  if (opts?.q) {
+    where.push('(i.prompt LIKE ? OR IFNULL(c.title, \'\') LIKE ?)');
+    const like = `%${opts.q}%`;
+    params.push(like, like);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const total = (db.prepare(`
+    SELECT COUNT(*) as c
+    FROM images i
+    LEFT JOIN conversations c ON c.id = i.conversation_id
+    ${whereSql}
+  `).get(...params) as { c: number }).c;
+  const limit = Math.min(Math.max(opts?.limit ?? 240, 1), 500);
+  const offset = Math.max(opts?.offset ?? 0, 0);
+  const rows = db.prepare(`
+    SELECT i.*, c.title as conversation_title
+    FROM images i
+    LEFT JOIN conversations c ON c.id = i.conversation_id
+    ${whereSql}
+    ORDER BY i.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset) as any[];
+  return {
+    total,
+    images: rows.map((r) => ({
+      ...parseImageRow(r)!,
+      conversation_title: r.conversation_title ?? null,
+    })),
+  };
+}
+
 export function getImage(id: string) {
   const db = getDb();
   return parseImageRow(db.prepare(`SELECT * FROM images WHERE id = ?`).get(id));
@@ -318,10 +374,10 @@ export function deleteImage(id: string): boolean {
 
   // Physical delete of files
   try {
-    const imgFullPath = join(DATA_DIR, img.file_path);
-    const thumbFullPath = join(DATA_DIR, img.thumb_path);
-    if (existsSync(imgFullPath)) unlinkSync(imgFullPath);
-    if (existsSync(thumbFullPath)) unlinkSync(thumbFullPath);
+    const imgFullPath = join(/* turbopackIgnore: true */ DATA_DIR, img.file_path);
+    const thumbFullPath = join(/* turbopackIgnore: true */ DATA_DIR, img.thumb_path);
+    if (existsSync(/* turbopackIgnore: true */ imgFullPath)) unlinkSync(/* turbopackIgnore: true */ imgFullPath);
+    if (existsSync(/* turbopackIgnore: true */ thumbFullPath)) unlinkSync(/* turbopackIgnore: true */ thumbFullPath);
   } catch (e) {
     console.error('Failed to delete image files:', e);
     // Continue to delete DB record even if file delete fails
@@ -352,6 +408,25 @@ export function getAllSettings(): Record<string, string> {
   const settings: Record<string, string> = {};
   rows.forEach(r => settings[r.key] = r.value);
   return settings;
+}
+
+export function updateMessageContent(id: string, content: string) {
+  getDb().prepare(`UPDATE messages SET content = ? WHERE id = ?`).run(content, id);
+  return getMessage(id);
+}
+
+export function deleteMessagesAfter(convId: string, messageId: string, inclusive = false) {
+  const msgs = listMessages(convId);
+  const idx = msgs.findIndex((m) => m.id === messageId);
+  if (idx < 0) return 0;
+  const start = inclusive ? idx : idx + 1;
+  const ids = msgs.slice(start).map((m) => m.id);
+  if (ids.length === 0) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  const result = getDb()
+    .prepare(`DELETE FROM messages WHERE conversation_id = ? AND id IN (${placeholders})`)
+    .run(convId, ...ids);
+  return result.changes;
 }
 
 export function updateMessageStatus(

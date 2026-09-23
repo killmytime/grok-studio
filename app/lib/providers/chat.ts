@@ -12,7 +12,8 @@ export function chatHeaders(backend: CapabilityBackend): Record<string, string> 
 
 export async function fetchChatCompletions(
   body: Record<string, unknown>,
-  backend: CapabilityBackend = resolveChatBackend()
+  backend: CapabilityBackend = resolveChatBackend(),
+  init?: { signal?: AbortSignal }
 ): Promise<Response> {
   const err = assertChatConfigured(backend);
   if (err) {
@@ -27,5 +28,6 @@ export async function fetchChatCompletions(
       ...body,
       model: body.model || backend.model,
     }),
+    signal: init?.signal,
   });
 }

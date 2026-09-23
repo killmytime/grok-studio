@@ -9,7 +9,7 @@ interface Toast {
   id: string;
   title: string;
   description?: string;
-  variant: ToastVariant;
+  variant?: ToastVariant;
   duration?: number;
 }
 
@@ -26,7 +26,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const toast = useCallback((props: Omit<Toast, 'id'>) => {
     const id = Math.random().toString(36).slice(2, 11);
-    const newToast: Toast = { id, ...props, duration: props.duration ?? 5000 };
+    const newToast: Toast = { variant: 'default', ...props, id, duration: props.duration ?? 5000 };
 
     setToasts((prev) => [...prev, newToast]);
 

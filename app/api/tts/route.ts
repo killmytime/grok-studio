@@ -72,7 +72,7 @@ export async function POST(req: Request) {
           if (done) {
             if (persist) {
               await new Promise<void>((resolve, reject) => {
-                persist.stream.end((err) => (err ? reject(err) : resolve()));
+                persist.stream.end((err?: Error | null) => (err ? reject(err) : resolve()));
               });
               mergeMessageExtra(messageId, { audio_path: persist.rel });
             }
