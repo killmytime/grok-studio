@@ -85,4 +85,14 @@ describe('gallery listing', () => {
     expect(data.total).toBe(4);
     expect(data.images.some((img: any) => img.status === 'error')).toBe(true);
   });
+
+  it('paginates with limit and offset', async () => {
+    const page1 = await (await imagesRoute.GET(new Request('http://localhost/api/images?status=all&limit=2&offset=0'))).json();
+    const page2 = await (await imagesRoute.GET(new Request('http://localhost/api/images?status=all&limit=2&offset=2'))).json();
+    expect(page1.total).toBe(4);
+    expect(page1.images).toHaveLength(2);
+    expect(page2.images).toHaveLength(2);
+    const ids = [...page1.images, ...page2.images].map((img: any) => img.id);
+    expect(new Set(ids).size).toBe(4);
+  });
 });

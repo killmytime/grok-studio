@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Settings } from 'lucide-react';
 import { getIntegration, integrationsFor, type Capability, type IntegrationManifest } from '@/app/lib/integrations/catalog';
+import { ASPECT_RATIOS, GEN_COUNTS, RESOLUTIONS, normalizeResolution } from '@/app/lib/image-presets';
+import { APP_NAME, APP_VERSION } from '@/app/lib/version';
 import type { AppSettings } from '@/app/lib/types';
 
 const CAP_LABEL: Record<Capability, string> = {
@@ -214,7 +216,12 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
       </Button>
       <DialogContent className="sm:max-w-[680px] bg-zinc-950 border-zinc-800 max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>设置</DialogTitle>
+          <DialogTitle className="flex items-baseline gap-2">
+            设置
+            <span className="text-[10px] font-normal text-zinc-600">
+              {APP_NAME} v{(settings as any).app_version || APP_VERSION}
+            </span>
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6 py-2">
@@ -238,6 +245,73 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                 退出登录
               </Button>
             )}
+          </section>
+
+          <section className="space-y-3">
+            <div className="text-xs font-medium text-zinc-300">生图</div>
+            <Field
+              label="默认分辨率"
+              hint={
+                (RESOLUTIONS.find((r) => r.id === normalizeResolution(form.default_resolution))?.hint || '')
+                + '。各家模型认的字段不完全一样，不支持的换 1K 即可。'
+              }
+            >
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {RESOLUTIONS.map((r) => {
+                  const on = normalizeResolution(form.default_resolution) === r.id;
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => set('default_resolution', r.id)}
+                      className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                        on ? 'border-white bg-white text-black' : 'border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                      }`}
+                    >
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="默认比例">
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {ASPECT_RATIOS.map((r) => {
+                  const on = (form.default_aspect_ratio || '1:1') === r;
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => set('default_aspect_ratio', r)}
+                      className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                        on ? 'border-white bg-white text-black' : 'border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="每次张数" hint="一次请求出几张。上游不支持多张时只会回一张。">
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {GEN_COUNTS.map((n) => {
+                  const on = (form.default_n || '1') === n;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => set('default_n', n)}
+                      className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                        on ? 'border-white bg-white text-black' : 'border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                      }`}
+                    >
+                      {n} 张
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
           </section>
 
           <section className="space-y-3">
@@ -412,7 +486,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
           </section>
 
           <section className="space-y-3">
-            <div className="text-xs font-medium text-zinc-300">生成参数</div>
+            <div className="text-xs font-medium text-zinc-300">聊天参数</div>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Temperature">
                 <Input value={form.temperature || '0.7'} onChange={(e) => set('temperature', e.target.value)} className="settings-input mt-1" />
@@ -470,6 +544,9 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
               {testResult.ok ? '连接成功' : '连接失败'}: {JSON.stringify(testResult).slice(0, 300)}
             </div>
           )}
+          <div className="border-t border-zinc-800 pt-3 text-[10px] text-zinc-600">
+            {APP_NAME} · v{(form as any).app_version || APP_VERSION}
+          </div>
         </div>
       </DialogContent>
     </Dialog>

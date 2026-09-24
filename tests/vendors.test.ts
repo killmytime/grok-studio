@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { APP_VERSION } from '../app/lib/version';
 import { createServer } from 'http';
 import { join } from 'path';
 import { existsSync, mkdirSync, rmSync } from 'fs';
@@ -14,6 +15,7 @@ describe('vendor registry', () => {
   let vendorsApi: any;
   let bindingsApi: any;
   let settingsApi: any;
+  let healthApi: any;
   let backends: any;
   let vendorHelpers: any;
 
@@ -27,6 +29,7 @@ describe('vendor registry', () => {
     vendorsApi = await import('../app/api/vendors/route');
     bindingsApi = await import('../app/api/bindings/route');
     settingsApi = await import('../app/api/settings/route');
+    healthApi = await import('../app/api/health/route');
   });
 
   afterAll(() => {
@@ -46,6 +49,16 @@ describe('vendor registry', () => {
     expect(grok.models.some((m: any) => m.capabilities.includes('image.edit'))).toBe(true);
     expect(data.kinds.some((k: any) => k.id === 'imagen' && !k.capabilities.includes('image.edit'))).toBe(true);
     expect(data.auth_required).toBe(false);
+    expect(data.app_version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(data.default_resolution).toBeTruthy();
+  });
+
+  it('GET /api/health returns the app version', async () => {
+    const res = await healthApi.GET();
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.ok).toBe(true);
+    expect(data.version).toBe(APP_VERSION);
   });
 
   it('POST vendor + binding drives generate resolve independently of chat', async () => {

@@ -231,6 +231,34 @@
   border: 1px solid #27272a;
 }
 
+.gallery-tile {
+  backface-visibility: hidden;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gallery-tile {
+    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .gallery-tile:hover {
+    transform: translate3d(0, -6px, 0) scale(1.035);
+  }
+  .gallery-tile:active {
+    transform: translate3d(0, 0, 0) scale(0.985);
+    transition-duration: 90ms;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-tile,
+  .gallery-lightbox,
+  .gallery-lightbox-stage {
+    transition: none !important;
+  }
+  .gallery-tile:hover {
+    transform: none;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

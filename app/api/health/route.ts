@@ -4,6 +4,11 @@ import { assertChatConfigured, fetchChatCompletions } from '@/app/lib/providers/
 import { jetsonHealth } from '@/app/lib/providers/jetson';
 import { ttsHealth } from '@/app/lib/providers/tts';
 import { canonicalIntegrationId } from '@/app/lib/integrations/catalog';
+import { APP_NAME, APP_VERSION } from '@/app/lib/version';
+
+export async function GET() {
+  return NextResponse.json({ ok: true, name: APP_NAME, version: APP_VERSION });
+}
 
 export async function POST(req: Request) {
   const { type } = await req.json(); // 'chat' | 'image' | 'generate' | 'jetson' | 'imagen' | 'tts'

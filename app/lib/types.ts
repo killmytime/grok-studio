@@ -78,6 +78,7 @@ export interface AppSettings {
   jetson_api_key?: string;
   jetson_steps?: string;
   jetson_seed?: string;
+  app_version?: string;
   resolved_chat_base_url?: string;
   resolved_image_generate_base_url?: string;
   resolved_image_edit_base_url?: string;

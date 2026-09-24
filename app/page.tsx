@@ -18,10 +18,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy, Menu, Image, MessageCircle, ChevronDown, ChevronUp, Trash2, MoreHorizontal, ShieldAlert, Images } from 'lucide-react';
+import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy, Menu, Image, MessageCircle, ChevronDown, ChevronUp, Trash2, MoreHorizontal, ShieldAlert, Images, RotateCw } from 'lucide-react';
 import type { Conversation, Message, ImageAsset, AppSettings } from './lib/types';
 import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
+import { ASPECT_RATIOS, RESOLUTIONS, normalizeResolution } from './lib/image-presets';
+import ViewerImage from './components/ViewerImage';
+import { useViewerRotation } from './components/useViewerRotation';
 
 const resumingUserTurns = new Set<string>();
 
@@ -40,6 +43,7 @@ export default function GrokStudio() {
 
   const [input, setInput] = useState('');
   const [selectedAspect, setSelectedAspect] = useState('1:1');
+  const [selectedResolution, setSelectedResolution] = useState('1k');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [settings, setSettings] = useState<AppSettings>({
@@ -71,6 +75,7 @@ export default function GrokStudio() {
   const imageBusy = isGenerating || images.some(i => i.status === 'pending');
   const activeBackends = settings.active || describeFromSettings(settings);
   const canEditImages = !!activeBackends.edit.available;
+  const { rotation, cycle: rotatePreview } = useViewerRotation(!!previewImage, previewImage?.id);
 
   // Load initial data
   useEffect(() => {
@@ -227,6 +232,8 @@ export default function GrokStudio() {
     const res = await fetch('/api/settings');
     const data = await res.json();
     setSettings(data);
+    if (data.default_aspect_ratio) setSelectedAspect(data.default_aspect_ratio);
+    if (data.default_resolution) setSelectedResolution(normalizeResolution(data.default_resolution));
   }
 
   async function createNewConversation() {
@@ -401,7 +408,7 @@ export default function GrokStudio() {
           prompt,
           conversation_id: currentConvId,
           aspect_ratio: selectedAspect,
-          resolution: settings.default_resolution || '1k',
+          resolution: selectedResolution || settings.default_resolution || '1k',
           n: settings.default_n,
         }),
         signal: controller.signal,
@@ -458,7 +465,7 @@ export default function GrokStudio() {
           image_id: source.id,
           conversation_id: currentConvId,
           aspect_ratio: selectedAspect,
-          resolution: settings.default_resolution || '1k',
+          resolution: selectedResolution || settings.default_resolution || '1k',
         }),
         signal: controller.signal,
       });
@@ -934,9 +941,9 @@ export default function GrokStudio() {
         </div>
 
         <div className={`border-t border-zinc-800 px-3 py-2 md:px-4 md:py-3 bg-zinc-950 ${mobileTab === 'images' ? 'hidden md:block' : 'block'}`}>
-          <div className="flex items-center gap-1.5 mb-2 overflow-x-auto">
+          <div className="flex flex-wrap items-center gap-1.5 mb-2">
             <div className="text-xs text-zinc-500 shrink-0">比例</div>
-            {['1:1', '16:9', '9:16', '4:3', '3:4'].map(ratio => (
+            {ASPECT_RATIOS.map(ratio => (
               <button
                 key={ratio}
                 onClick={() => setSelectedAspect(ratio)}
@@ -949,7 +956,21 @@ export default function GrokStudio() {
                 {ratio}
               </button>
             ))}
-            <div className="hidden sm:block text-[10px] text-zinc-500 ml-1 shrink-0">· 默认 1k</div>
+            <span className="mx-0.5 h-3 w-px shrink-0 bg-zinc-800" />
+            <div className="text-xs text-zinc-500 shrink-0">画质</div>
+            {RESOLUTIONS.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => setSelectedResolution(r.id)}
+                className={`px-2.5 py-0.5 text-xs rounded-full border shrink-0 transition ${
+                  selectedResolution === r.id
+                    ? 'bg-blue-600 border-blue-600 text-white'
+                    : 'border-zinc-700 hover:bg-zinc-800 text-zinc-400'
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
           </div>
 
           <Textarea
@@ -1145,6 +1166,18 @@ export default function GrokStudio() {
                     </Button>
                   </div>
 
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={rotatePreview}
+                    aria-label="旋转图片"
+                    title="旋转（手机没开自动旋转时也可横着看）"
+                    data-testid="rotate-image"
+                  >
+                    <RotateCw className="h-4 w-4" />
+                  </Button>
+
                   {/* 下载高频操作外露 */}
                   <Button
                     variant="ghost"
@@ -1247,21 +1280,17 @@ export default function GrokStudio() {
                 onTouchEnd={handleTouchEnd}
               >
                 <div className="group relative flex h-full w-full items-center justify-center p-2 sm:p-4">
-                  <img
+                  <ViewerImage
                     key={previewImage.id}
-                    src={`/api/files/${previewImage.file_path}`}
+                    thumbSrc={previewImage.thumb_path ? `/api/files/${previewImage.thumb_path}` : null}
+                    fullSrc={`/api/files/${previewImage.file_path}`}
                     alt={previewImage.prompt || "图片预览"}
-                    draggable={false}
-                    className={`
-                      block max-h-full max-w-full select-none rounded-md
-                      object-contain shadow-2xl transition-[filter,opacity,transform] duration-200
+                    rotation={rotation}
+                    onClick={() => setShowImageDetails((value) => !value)}
+                    imgClassName={`
+                      select-none rounded-md shadow-2xl
                       ${isNSFW ? "blur-2xl scale-105" : ""}
                     `}
-                    style={{
-                      width: "auto",
-                      height: "auto",
-                    }}
-                    onClick={() => setShowImageDetails((value) => !value)}
                   />
 
                   {/* NSFW 提示独立覆盖 */}

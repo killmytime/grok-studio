@@ -9,6 +9,7 @@ import {
 import { INTEGRATIONS } from '@/app/lib/integrations/catalog';
 import { ensureDefaultVendor, listBindings, listVendors } from '@/app/lib/vendors';
 import { accessEnabled } from '@/lib/access';
+import { APP_VERSION } from '@/app/lib/version';
 
 const DEFAULTS: Record<string, string> = {
   base_url: process.env.GROK_BASE_URL || 'http://127.0.0.1:3000/v1',
@@ -57,6 +58,7 @@ export async function GET() {
     vendors: listVendors().map((v) => ({ ...v, api_key: v.api_key ? '********' : '' })),
     bindings: listBindings(),
     auth_required: accessEnabled(),
+    app_version: APP_VERSION,
   });
 }
 
@@ -64,7 +66,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   Object.entries(body).forEach(([k, v]) => {
     if (typeof v !== 'string') return;
-    if (k.startsWith('resolved_') || k === 'active' || k === 'vendors' || k === 'bindings' || k === 'kinds' || k === 'auth_required') return;
+    if (k.startsWith('resolved_') || k === 'active' || k === 'vendors' || k === 'bindings' || k === 'kinds' || k === 'auth_required' || k === 'app_version') return;
     setSetting(k, v);
   });
   return NextResponse.json({ ok: true });

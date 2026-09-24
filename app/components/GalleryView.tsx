@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   Loader2,
   MessageCircle,
+  RotateCw,
   Search,
   Trash2,
   X,
@@ -20,7 +21,10 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { describeFromSettings } from '@/app/lib/integrations/catalog';
+import { ASPECT_RATIOS, RESOLUTIONS, normalizeResolution } from '@/app/lib/image-presets';
 import type { AppSettings, Conversation, GalleryImage } from '@/app/lib/types';
+import ViewerImage from './ViewerImage';
+import { useViewerRotation } from './useViewerRotation';
 
 const KINDS: Array<{ id: '' | 'generate' | 'edit' | 'upload'; label: string }> = [
   { id: '', label: '全部' },
@@ -29,7 +33,7 @@ const KINDS: Array<{ id: '' | 'generate' | 'edit' | 'upload'; label: string }> =
   { id: 'upload', label: '上传' },
 ];
 
-const ASPECTS = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+const PAGE = 32;
 
 function failMsg(prefix: string, data: any) {
   const err = String(data?.error || '');
@@ -43,6 +47,23 @@ function convLabel(img: GalleryImage) {
   return title || '未归类会话';
 }
 
+function groupByConversation(images: GalleryImage[]) {
+  const order: string[] = [];
+  const map = new Map<string, GalleryImage[]>();
+  for (const img of images) {
+    const key = img.conversation_id || '_none';
+    if (!map.has(key)) {
+      map.set(key, []);
+      order.push(key);
+    }
+    map.get(key)!.push(img);
+  }
+  return order.map((id) => {
+    const items = map.get(id)!;
+    return { id, title: convLabel(items[0]), images: items };
+  });
+}
+
 export default function GalleryView() {
   const { toast } = useToast();
   const [images, setImages] = useState<GalleryImage[]>([]);
@@ -54,15 +75,25 @@ export default function GalleryView() {
   const [q, setQ] = useState('');
   const [qDraft, setQDraft] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [previewEntered, setPreviewEntered] = useState(false);
   const [editPrompt, setEditPrompt] = useState('');
   const [genPrompt, setGenPrompt] = useState('');
   const [aspect, setAspect] = useState('1:1');
+  const [resolution, setResolution] = useState('1k');
   const [targetConvId, setTargetConvId] = useState('');
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<Set<string>>(new Set());
+  const loadingRef = useRef(false);
+  const offsetRef = useRef(0);
+  const loadGen = useRef(0);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | null>(null);
+  const filterKey = `${kind}|${filterConv}|${q}`;
 
   const active = settings?.active || (settings ? describeFromSettings(settings) : null);
   const canEdit = !!active?.edit.available;
@@ -72,24 +103,65 @@ export default function GalleryView() {
     () => images.filter((i) => i.status === 'completed' && i.file_path),
     [images]
   );
+  const groups = useMemo(() => groupByConversation(images), [images]);
+  const { rotation, cycle } = useViewerRotation(!!preview, preview?.id);
 
-  const load = useCallback(async () => {
-    const params = new URLSearchParams();
-    if (kind) params.set('kind', kind);
-    if (filterConv) params.set('conversation_id', filterConv);
-    if (q) params.set('q', q);
-    params.set('status', 'all');
-    params.set('limit', '400');
-    const res = await fetch(`/api/images?${params}`);
-    const data = await res.json();
-    setImages(data.images || []);
-    setTotal(data.total || 0);
-    setLoading(false);
-  }, [kind, filterConv, q]);
+  const mergeIncoming = useCallback((incoming: GalleryImage[], reset: boolean) => {
+    setImages((prev) => {
+      const seen = new Set<string>();
+      const next: GalleryImage[] = [];
+      const source = reset ? incoming : [...prev, ...incoming];
+      for (const img of source) {
+        if (seen.has(img.id)) continue;
+        seen.add(img.id);
+        next.push(img);
+      }
+      return next;
+    });
+  }, []);
+
+  const load = useCallback(async (reset: boolean) => {
+    if (!reset && loadingRef.current) return;
+    const gen = reset ? ++loadGen.current : loadGen.current;
+    loadingRef.current = true;
+    if (reset) {
+      setLoading(true);
+      offsetRef.current = 0;
+    } else {
+      setLoadingMore(true);
+    }
+    try {
+      const params = new URLSearchParams();
+      if (kind) params.set('kind', kind);
+      if (filterConv) params.set('conversation_id', filterConv);
+      if (q) params.set('q', q);
+      params.set('status', 'all');
+      params.set('limit', String(PAGE));
+      params.set('offset', String(reset ? 0 : offsetRef.current));
+      const res = await fetch(`/api/images?${params}`);
+      const data = await res.json();
+      if (gen !== loadGen.current) return;
+      const incoming: GalleryImage[] = data.images || [];
+      const t = data.total || 0;
+      setTotal(t);
+      mergeIncoming(incoming, reset);
+      const nextOffset = (reset ? 0 : offsetRef.current) + incoming.length;
+      offsetRef.current = nextOffset;
+      setHasMore(nextOffset < t && incoming.length > 0);
+    } finally {
+      if (gen === loadGen.current) {
+        loadingRef.current = false;
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    }
+  }, [kind, filterConv, q, mergeIncoming]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    setImages([]);
+    setHasMore(true);
+    void load(true);
+  }, [filterKey, load]);
 
   useEffect(() => {
     fetch('/api/conversations')
@@ -101,13 +173,32 @@ export default function GalleryView() {
       .catch(() => {});
     fetch('/api/settings')
       .then((r) => r.json())
-      .then(setSettings)
+      .then((s: AppSettings) => {
+        setSettings(s);
+        setAspect(s.default_aspect_ratio || '1:1');
+        setResolution(normalizeResolution(s.default_resolution));
+      })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (filterConv) setTargetConvId(filterConv);
   }, [filterConv]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasMore && !loading && !loadingMore) {
+          void load(false);
+        }
+      },
+      { rootMargin: '800px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loading, loadingMore, load, images.length]);
 
   async function pollUntilDone(id: string) {
     if (pollRef.current.has(id)) return;
@@ -122,7 +213,7 @@ export default function GalleryView() {
           return next.some((x) => x.id === id) ? next : [{ ...img, conversation_title: img.conversation_title || null }, ...next];
         });
         if (img.status === 'completed') {
-          setPreviewId(id);
+          openPreview(img, false);
           return;
         }
         if (img.status === 'error') {
@@ -167,7 +258,7 @@ export default function GalleryView() {
           prompt,
           conversation_id,
           aspect_ratio: aspect,
-          resolution: settings?.default_resolution || '1k',
+          resolution,
           n: settings?.default_n || '1',
         }),
       });
@@ -181,12 +272,15 @@ export default function GalleryView() {
         ...img,
         conversation_title: convTitle,
       }));
-      setImages((prev) => [...incoming, ...prev]);
+      setImages((prev) => {
+        const ids = new Set(incoming.map((i) => i.id));
+        return [...incoming, ...prev.filter((x) => !ids.has(x.id))];
+      });
       setTotal((n) => n + incoming.length);
       setGenPrompt('');
       for (const img of incoming) {
         if (img.status === 'pending') void pollUntilDone(img.id);
-        else setPreviewId(img.id);
+        else openPreview(img, false);
       }
     } catch (e: any) {
       toast({ title: '生成失败', description: e.message, variant: 'error' });
@@ -217,7 +311,7 @@ export default function GalleryView() {
           image_id: preview.id,
           conversation_id: preview.conversation_id,
           aspect_ratio: aspect,
-          resolution: settings?.default_resolution || '1k',
+          resolution,
         }),
       });
       const data = await res.json();
@@ -229,11 +323,14 @@ export default function GalleryView() {
         ...img,
         conversation_title: preview.conversation_title,
       }));
-      setImages((prev) => [...incoming, ...prev]);
+      setImages((prev) => {
+        const ids = new Set(incoming.map((i) => i.id));
+        return [...incoming, ...prev.filter((x) => !ids.has(x.id))];
+      });
       setTotal((n) => n + incoming.length);
       setEditPrompt('');
       if (incoming[0]) {
-        setPreviewId(incoming[0].id);
+        openPreview(incoming[0], false);
         if (incoming[0].status === 'pending') void pollUntilDone(incoming[0].id);
       }
     } catch (e: any) {
@@ -252,6 +349,7 @@ export default function GalleryView() {
     }
     setImages((prev) => prev.filter((x) => x.id !== id));
     setTotal((n) => Math.max(0, n - 1));
+    offsetRef.current = Math.max(0, offsetRef.current - 1);
     setSelected((prev) => {
       const next = new Set(prev);
       next.delete(id);
@@ -267,8 +365,8 @@ export default function GalleryView() {
     if (!ok) return;
     toast({ title: '已删除', variant: 'default' });
     const rest = images.filter((x) => x.id !== preview.id);
-    if (!rest.length) setPreviewId(null);
-    else setPreviewId(rest[Math.min(idx, rest.length - 1)].id);
+    if (!rest.length) closePreview();
+    else openPreview(rest[Math.min(idx, rest.length - 1)], false);
   }
 
   async function removeSelected() {
@@ -281,7 +379,7 @@ export default function GalleryView() {
     }
     setSelected(new Set());
     setSelectMode(false);
-    if (previewId && ids.includes(previewId)) setPreviewId(null);
+    if (previewId && ids.includes(previewId)) closePreview();
     toast({ title: `已删除 ${n} 张`, variant: 'default' });
   }
 
@@ -294,36 +392,52 @@ export default function GalleryView() {
     });
   }
 
-  function openPreview(img: GalleryImage) {
-    if (selectMode) {
+  function openPreview(img: GalleryImage, fromGrid = true) {
+    if (fromGrid && selectMode) {
       toggleSelect(img.id);
       return;
     }
     if (img.status !== 'completed' || !img.file_path) return;
+    if (closeTimer.current) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
     setPreviewId(img.id);
     setEditPrompt('');
+    requestAnimationFrame(() => setPreviewEntered(true));
+  }
+
+  function closePreview() {
+    setPreviewEntered(false);
+    closeTimer.current = window.setTimeout(() => {
+      setPreviewId(null);
+      closeTimer.current = null;
+    }, 220);
   }
 
   function stepPreview(dir: number) {
     const list = viewing.length ? viewing : images;
-    if (!list.length || previewIndex < 0) return;
+    if (!list.length || !previewId) return;
     const ids = list.map((i) => i.id);
-    const at = ids.indexOf(previewId || '');
+    const at = ids.indexOf(previewId);
     const next = ids[(at + dir + ids.length) % ids.length];
-    setPreviewId(next);
-    setEditPrompt('');
+    const img = list.find((i) => i.id === next);
+    if (img) {
+      setPreviewId(img.id);
+      setEditPrompt('');
+    }
   }
 
   useEffect(() => {
-    if (!preview) return;
+    if (!previewId) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft') stepPreview(-1);
       else if (e.key === 'ArrowRight') stepPreview(1);
-      else if (e.key === 'Escape') setPreviewId(null);
+      else if (e.key === 'Escape') closePreview();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [preview, previewId, images]);
+  }, [previewId, images]);
 
   function download(img: GalleryImage) {
     const a = document.createElement('a');
@@ -333,8 +447,6 @@ export default function GalleryView() {
     a.click();
     document.body.removeChild(a);
   }
-
-  const shown = images;
 
   return (
     <div className="flex h-dvh flex-col bg-black text-zinc-200">
@@ -350,7 +462,7 @@ export default function GalleryView() {
           <div className="min-w-0">
             <div className="text-sm font-medium tracking-tight">画廊</div>
             <div className="hidden text-[10px] text-zinc-500 sm:block">
-              {total} 张 · 点图欣赏，悬停可删
+              {total} 张 · 按会话分组，滑到底加载更多
             </div>
           </div>
           <div className="ml-auto flex items-center gap-1">
@@ -427,85 +539,102 @@ export default function GalleryView() {
         {loading && (
           <div className="flex h-40 items-center justify-center text-sm text-zinc-500">载入画廊…</div>
         )}
-        {!loading && shown.length === 0 && (
+        {!loading && images.length === 0 && (
           <div className="flex h-[60vh] flex-col items-center justify-center gap-2 text-zinc-500">
             <ImageIcon className="h-8 w-8 text-zinc-700" />
             <div className="text-sm">还没有可欣赏的画</div>
             <div className="text-xs">下面输入描述就能生图</div>
           </div>
         )}
-        <div className="columns-2 gap-2 sm:columns-3 lg:columns-4 xl:columns-5 2xl:columns-6">
-          {shown.map((img) => {
-            const pending = img.status === 'pending';
-            const errored = img.status === 'error';
-            const picked = selected.has(img.id);
-            return (
-              <div
-                key={img.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => openPreview(img)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    openPreview(img);
-                  }
-                }}
-                className={`mb-2 w-full break-inside-avoid overflow-hidden rounded-lg text-left transition ${
-                  picked ? 'ring-2 ring-white' : 'ring-0'
-                } ${pending || errored ? 'bg-zinc-900' : 'bg-zinc-950'}`}
-              >
-                <div className="group relative">
-                  {pending ? (
-                    <div className="flex aspect-[3/4] items-center justify-center bg-zinc-900">
-                      <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
-                    </div>
-                  ) : errored ? (
-                    <div className="flex aspect-square flex-col justify-end bg-red-950/40 p-3">
-                      <div className="text-xs text-red-300">失败</div>
-                      <div className="mt-1 line-clamp-3 text-[10px] text-zinc-400">{img.prompt}</div>
-                    </div>
-                  ) : (
-                    <img
-                      src={`/api/files/${img.thumb_path || img.file_path}`}
-                      alt={img.prompt || ''}
-                      className="block w-full bg-zinc-900 object-cover"
-                      loading="lazy"
-                    />
-                  )}
-                  {!pending && !errored && (
-                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent opacity-0 transition group-hover:opacity-100 group-focus:opacity-100" />
-                  )}
-                  {selectMode && (
-                    <div className={`absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full border ${
-                      picked ? 'border-white bg-white text-black' : 'border-white/50 bg-black/40'
-                    }`}>
-                      {picked ? <Check className="h-3 w-3" /> : null}
-                    </div>
-                  )}
-                  {!selectMode && !pending && !errored && (
-                    <button
-                      type="button"
-                      className="absolute right-2 top-2 rounded-full bg-black/55 p-1.5 text-zinc-200 opacity-100 md:opacity-0 md:group-hover:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void removeOne(img.id).then((ok) => {
-                          if (ok) toast({ title: '已删除', variant: 'default' });
-                        });
-                      }}
-                      aria-label="删除"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-                <div className="px-2 pb-2 pt-1.5">
-                  <div className="truncate text-[11px] text-zinc-400">{convLabel(img)}</div>
-                </div>
+        <div className="space-y-6">
+          {groups.map((group) => (
+            <section key={group.id}>
+              <div className="sticky top-0 z-10 mb-2 flex items-baseline gap-2 bg-black/75 px-0.5 py-1.5 backdrop-blur-md">
+                <h2 className="min-w-0 truncate text-xs font-medium text-zinc-300">{group.title}</h2>
+                <span className="shrink-0 text-[10px] text-zinc-600">{group.images.length} 张</span>
               </div>
-            );
-          })}
+              <div className="columns-2 gap-2 sm:columns-3 lg:columns-4 xl:columns-5 2xl:columns-6">
+                {group.images.map((img) => {
+                  const pending = img.status === 'pending';
+                  const errored = img.status === 'error';
+                  const picked = selected.has(img.id);
+                  return (
+                    <div
+                      key={img.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openPreview(img)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openPreview(img);
+                        }
+                      }}
+                      className={`gallery-tile mb-2 w-full break-inside-avoid rounded-lg text-left ${
+                        picked ? 'ring-2 ring-white' : 'ring-0'
+                      }`}
+                    >
+                      <div className={`group relative overflow-hidden rounded-lg ${pending || errored ? 'bg-zinc-900' : 'bg-zinc-950'}`}>
+                        {pending ? (
+                          <div className="flex aspect-[3/4] items-center justify-center bg-zinc-900">
+                            <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+                          </div>
+                        ) : errored ? (
+                          <div className="flex aspect-square flex-col justify-end bg-red-950/40 p-3">
+                            <div className="text-xs text-red-300">失败</div>
+                            <div className="mt-1 line-clamp-3 text-[10px] text-zinc-400">{img.prompt}</div>
+                          </div>
+                        ) : (
+                          <img
+                            src={`/api/files/${img.thumb_path || img.file_path}`}
+                            alt={img.prompt || ''}
+                            className="block w-full bg-zinc-900 object-cover"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        )}
+                        {!pending && !errored && (
+                          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus:opacity-100" />
+                        )}
+                        {selectMode && (
+                          <div className={`absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full border ${
+                            picked ? 'border-white bg-white text-black' : 'border-white/50 bg-black/40'
+                          }`}>
+                            {picked ? <Check className="h-3 w-3" /> : null}
+                          </div>
+                        )}
+                        {!selectMode && !pending && !errored && (
+                          <button
+                            type="button"
+                            className="absolute right-2 top-2 rounded-full bg-black/55 p-1.5 text-zinc-200 opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void removeOne(img.id).then((ok) => {
+                                if (ok) toast({ title: '已删除', variant: 'default' });
+                              });
+                            }}
+                            aria-label="删除"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
+        <div ref={sentinelRef} className="h-8" />
+        {loadingMore && (
+          <div className="flex items-center justify-center gap-2 py-4 text-xs text-zinc-500">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> 加载更多
+          </div>
+        )}
+        {!loading && !hasMore && images.length > 0 && (
+          <div className="py-4 text-center text-[10px] text-zinc-600">一共 {total} 张</div>
+        )}
       </div>
 
       {selectMode && selected.size > 0 && (
@@ -522,8 +651,8 @@ export default function GalleryView() {
 
       {!selectMode && (
         <div className="shrink-0 border-t border-white/10 bg-zinc-950/95 px-3 py-2 backdrop-blur md:px-5">
-          <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto">
-            {ASPECTS.map((r) => (
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+            {ASPECT_RATIOS.map((r) => (
               <button
                 key={r}
                 onClick={() => setAspect(r)}
@@ -532,6 +661,18 @@ export default function GalleryView() {
                 }`}
               >
                 {r}
+              </button>
+            ))}
+            <span className="mx-0.5 h-3 w-px shrink-0 bg-white/10" />
+            {RESOLUTIONS.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => setResolution(r.id)}
+                className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${
+                  resolution === r.id ? 'border-white bg-white text-black' : 'border-white/10 text-zinc-500'
+                }`}
+              >
+                {r.label}
               </button>
             ))}
             <select
@@ -570,9 +711,13 @@ export default function GalleryView() {
       )}
 
       {preview && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-black">
+        <div
+          className={`gallery-lightbox fixed inset-0 z-50 flex flex-col bg-black/95 transition-opacity duration-200 ${
+            previewEntered ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
           <header className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-2">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPreviewId(null)}>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={closePreview}>
               <X className="h-4 w-4" />
             </Button>
             <div className="min-w-0 flex-1">
@@ -580,6 +725,7 @@ export default function GalleryView() {
               <div className="text-[10px] text-zinc-500">
                 {previewIndex + 1}/{images.length}
                 {preview.aspect_ratio ? ` · ${preview.aspect_ratio}` : ''}
+                {preview.resolution ? ` · ${preview.resolution}` : ''}
                 {preview.model ? ` · ${preview.model}` : ''}
               </div>
             </div>
@@ -589,6 +735,9 @@ export default function GalleryView() {
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => stepPreview(1)} disabled={images.length < 2}>
               <ChevronRight className="h-4 w-4" />
             </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={cycle} title="旋转（手机锁屏方向时也可横着看）" data-testid="rotate-image">
+              <RotateCw className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => download(preview)}>
               <Download className="h-4 w-4" />
             </Button>
@@ -597,16 +746,22 @@ export default function GalleryView() {
             </Button>
           </header>
 
-          <div className="relative min-h-0 flex-1 bg-black">
+          <div
+            className={`gallery-lightbox-stage relative min-h-0 flex-1 bg-black transition-transform duration-200 ${
+              previewEntered ? 'scale-100' : 'scale-[0.97]'
+            }`}
+          >
             {preview.status === 'pending' ? (
               <div className="flex h-full items-center justify-center text-zinc-500">
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" /> 生成中
               </div>
             ) : preview.file_path ? (
-              <img
-                src={`/api/files/${preview.file_path}`}
+              <ViewerImage
+                key={preview.id}
+                thumbSrc={preview.thumb_path ? `/api/files/${preview.thumb_path}` : null}
+                fullSrc={`/api/files/${preview.file_path}`}
                 alt={preview.prompt || ''}
-                className="h-full w-full object-contain"
+                rotation={rotation}
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-red-400">
