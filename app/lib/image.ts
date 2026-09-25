@@ -1,8 +1,9 @@
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import sharp from 'sharp';
 import crypto from 'crypto';
-import { addImage, updateImage, getImage } from './db';
+import { addImage, getDb, updateImage, getImage } from './db';
+import { nearestAspect, resolutionFromPixels } from './image-presets';
 import type { ImageAsset } from './types';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
@@ -155,6 +156,85 @@ export function getPendingImage(id: string): ImageAsset | undefined {
 
 export function getImageFilePath(relative: string): string {
   return join(/* turbopackIgnore: true */ DATA_DIR, relative);
+}
+
+let adoptedOrphans: Promise<number> | null = null;
+
+/** Files left behind when a conversation delete used to drop the image row. */
+export async function importOrphanImageFiles(): Promise<number> {
+  ensureDirs();
+  const known = new Set(
+    (getDb().prepare(`SELECT file_path FROM images`).all() as { file_path: string }[]).map((row) => row.file_path)
+  );
+  let added = 0;
+  let names: string[] = [];
+  try {
+    names = readdirSync(/* turbopackIgnore: true */ IMAGES_DIR);
+  } catch {
+    return 0;
+  }
+  for (const name of names) {
+    if (!/\.(png|jpe?g|webp)$/i.test(name)) continue;
+    const relative = `images/${name}`;
+    if (known.has(relative)) continue;
+    const full = join(IMAGES_DIR, name);
+    try {
+      const buffer = readFileSync(/* turbopackIgnore: true */ full);
+      const meta = await sharp(buffer).metadata();
+      const width = meta.width || 0;
+      const height = meta.height || 0;
+      if (!width || !height) continue;
+      const mime = meta.format === 'jpeg' ? 'image/jpeg' : meta.format === 'webp' ? 'image/webp' : 'image/png';
+      const created = statSync(/* turbopackIgnore: true */ full).mtime.toISOString();
+      const stem = name.replace(/\.[^.]+$/, '');
+      const thumbRelative = `thumbs/${stem}.jpg`;
+      const thumbFull = join(THUMBS_DIR, `${stem}.jpg`);
+      if (!existsSync(/* turbopackIgnore: true */ thumbFull)) {
+        const thumbBuffer = await sharp(buffer)
+          .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+        writeFileSync(thumbFull, thumbBuffer);
+      }
+      const asset = addImage({
+        conversation_id: null,
+        message_id: null,
+        kind: 'generate',
+        prompt: '',
+        negative_prompt: null,
+        model: '',
+        aspect_ratio: nearestAspect(width, height),
+        resolution: resolutionFromPixels(width, height),
+        quality: null,
+        n_index: 1,
+        parent_image_id: null,
+        file_path: relative,
+        thumb_path: thumbRelative,
+        mime,
+        width,
+        height,
+        sha256: computeSha256(buffer),
+        status: 'completed',
+        extra_json: { source: 'orphan-file', recovered: true },
+      });
+      getDb().prepare(`UPDATE images SET created_at = ? WHERE id = ?`).run(created, asset.id);
+      known.add(relative);
+      added++;
+    } catch (e) {
+      console.error('orphan image', name, e);
+    }
+  }
+  return added;
+}
+
+export function adoptOrphanImageFiles(): Promise<number> {
+  if (!adoptedOrphans) {
+    adoptedOrphans = importOrphanImageFiles().catch((err) => {
+      adoptedOrphans = null;
+      throw err;
+    });
+  }
+  return adoptedOrphans;
 }
 
 export async function imageToDataUri(filePath: string): Promise<string> {

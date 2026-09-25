@@ -57,7 +57,7 @@ function initSchema(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS images (
       id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
+      conversation_id TEXT,
       message_id TEXT,
       kind TEXT NOT NULL CHECK(kind IN ('generate','edit','upload')),
       prompt TEXT NOT NULL,
@@ -79,7 +79,7 @@ function initSchema(db: Database.Database) {
       error_message TEXT,
       job_id TEXT,
       extra_json TEXT,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL,
       FOREIGN KEY (parent_image_id) REFERENCES images(id) ON DELETE SET NULL
     );
 
@@ -149,8 +149,71 @@ function initSchema(db: Database.Database) {
     if (!convCols.some(c => c.name === 'summary_updated_at')) {
       db.exec("ALTER TABLE conversations ADD COLUMN summary_updated_at TEXT");
     }
+    migrateImagesKeepAfterConversationDelete(db);
   } catch (e) {
-    // ignore migration errors
+    console.error('schema migration', e);
+  }
+}
+
+const IMAGE_COLUMNS = [
+  'id', 'conversation_id', 'message_id', 'kind', 'prompt', 'negative_prompt',
+  'model', 'aspect_ratio', 'resolution', 'quality', 'n_index', 'parent_image_id',
+  'file_path', 'thumb_path', 'mime', 'width', 'height', 'sha256', 'created_at',
+  'status', 'error_message', 'job_id', 'extra_json',
+] as const;
+
+/** Old databases cascade-deleted image rows with the conversation. Keep the row and clear the link. */
+export function migrateImagesKeepAfterConversationDelete(db: Database.Database) {
+  const cols = db.prepare('PRAGMA table_info(images)').all() as { name: string; notnull: number }[];
+  if (!cols.some((c) => c.name === 'id')) return;
+  const conv = cols.find((c) => c.name === 'conversation_id');
+  const fks = db.prepare('PRAGMA foreign_key_list(images)').all() as { from: string; on_delete: string }[];
+  const fk = fks.find((f) => f.from === 'conversation_id');
+  const nullable = !!conv && conv.notnull === 0;
+  const setNull = !!fk && String(fk.on_delete).toUpperCase() === 'SET NULL';
+  if (nullable && setNull) return;
+
+  const fkOn = db.pragma('foreign_keys', { simple: true });
+  db.pragma('foreign_keys = OFF');
+  const colList = IMAGE_COLUMNS.join(', ');
+  try {
+    db.exec('DROP TABLE IF EXISTS images__keep');
+    db.exec(`
+      CREATE TABLE images__keep (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT,
+        message_id TEXT,
+        kind TEXT NOT NULL CHECK(kind IN ('generate','edit','upload')),
+        prompt TEXT NOT NULL,
+        negative_prompt TEXT,
+        model TEXT NOT NULL,
+        aspect_ratio TEXT NOT NULL,
+        resolution TEXT NOT NULL,
+        quality TEXT,
+        n_index INTEGER NOT NULL DEFAULT 1,
+        parent_image_id TEXT,
+        file_path TEXT NOT NULL,
+        thumb_path TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status TEXT DEFAULT 'completed',
+        error_message TEXT,
+        job_id TEXT,
+        extra_json TEXT,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL,
+        FOREIGN KEY (parent_image_id) REFERENCES images__keep(id) ON DELETE SET NULL
+      );
+    `);
+    db.exec(`INSERT INTO images__keep (${colList}) SELECT ${colList} FROM images`);
+    db.exec('DROP TABLE images');
+    db.exec('ALTER TABLE images__keep RENAME TO images');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_images_conv ON images(conversation_id, created_at)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_images_job ON images(job_id)');
+  } finally {
+    db.pragma(fkOn ? 'foreign_keys = ON' : 'foreign_keys = OFF');
   }
 }
 
@@ -300,7 +363,9 @@ export function listAllImages(opts?: {
     where.push('i.kind = ?');
     params.push(opts.kind);
   }
-  if (opts?.conversation_id) {
+  if (opts?.conversation_id === '__none__') {
+    where.push('(i.conversation_id IS NULL OR c.id IS NULL)');
+  } else if (opts?.conversation_id) {
     where.push('i.conversation_id = ?');
     params.push(opts.conversation_id);
   }
@@ -349,6 +414,7 @@ export function getImage(id: string) {
 const IMAGE_UPDATE_FIELDS = new Set([
   'status', 'error_message', 'file_path', 'thumb_path', 'mime', 'width', 'height',
   'sha256', 'job_id', 'extra_json', 'model', 'prompt', 'negative_prompt',
+  'aspect_ratio', 'resolution', 'quality', 'n_index',
 ]);
 
 export function updateImage(id: string, updates: Partial<ImageAsset> & { extra_json?: Record<string, any> | string | null }) {

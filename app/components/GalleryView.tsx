@@ -43,8 +43,9 @@ function failMsg(prefix: string, data: any) {
 }
 
 function convLabel(img: GalleryImage) {
+  if (!img.conversation_id) return '未归类';
   const title = (img.conversation_title || '').replace(/\s+/g, ' ').trim();
-  return title || '未归类会话';
+  return title || '未命名会话';
 }
 
 function groupByConversation(images: GalleryImage[]) {
@@ -499,6 +500,7 @@ export default function GalleryView() {
             className="h-7 max-w-[160px] shrink-0 rounded-full border border-white/10 bg-transparent px-2 text-xs text-zinc-300 outline-none"
           >
             <option value="">所有会话</option>
+            <option value="__none__">未归类</option>
             {conversations.map((c) => (
               <option key={c.id} value={c.id}>
                 {(c.title || '未命名').replace(/\s+/g, ' ').slice(0, 24)}
@@ -726,7 +728,10 @@ export default function GalleryView() {
                 {previewIndex + 1}/{images.length}
                 {preview.aspect_ratio ? ` · ${preview.aspect_ratio}` : ''}
                 {preview.resolution ? ` · ${preview.resolution}` : ''}
+                {preview.width && preview.height ? ` · ${preview.width}×${preview.height}` : ''}
                 {preview.model ? ` · ${preview.model}` : ''}
+                {preview.extra_json?.source === 'chat' ? ' · 聊天' : ''}
+                {preview.extra_json?.recovered ? ' · 文件找回' : ''}
               </div>
             </div>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => stepPreview(-1)} disabled={images.length < 2}>
@@ -797,12 +802,14 @@ export default function GalleryView() {
                 >
                   <Edit3 className="mr-1 h-4 w-4" /> 改图
                 </Button>
-                <Link
-                  href={`/?c=${encodeURIComponent(preview.conversation_id)}&img=${encodeURIComponent(preview.id)}`}
-                  className="inline-flex h-10 items-center rounded-lg bg-white px-3 text-sm font-medium text-black hover:bg-zinc-200"
-                >
-                  <MessageCircle className="mr-1 h-4 w-4" /> 去对话
-                </Link>
+                {preview.conversation_id && (
+                  <Link
+                    href={`/?c=${encodeURIComponent(preview.conversation_id)}&img=${encodeURIComponent(preview.id)}`}
+                    className="inline-flex h-10 items-center rounded-lg bg-white px-3 text-sm font-medium text-black hover:bg-zinc-200"
+                  >
+                    <MessageCircle className="mr-1 h-4 w-4" /> 去对话
+                  </Link>
+                )}
               </div>
             </div>
           </div>

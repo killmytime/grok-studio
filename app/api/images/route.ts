@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { listAllImages } from '@/app/lib/db';
+import { adoptOrphanImageFiles } from '@/app/lib/image';
 
 const KINDS = new Set(['generate', 'edit', 'upload']);
 const STATUSES = new Set(['completed', 'pending', 'error', 'all']);
@@ -18,6 +19,12 @@ export async function GET(req: Request) {
   }
   if (status && !STATUSES.has(status)) {
     return NextResponse.json({ error: 'invalid status' }, { status: 400 });
+  }
+
+  try {
+    await adoptOrphanImageFiles();
+  } catch (e) {
+    console.error('adopt orphan images', e);
   }
 
   return NextResponse.json(listAllImages({

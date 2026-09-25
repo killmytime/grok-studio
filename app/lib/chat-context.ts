@@ -7,7 +7,14 @@ export type ChatTurn = {
   content: string;
   status?: string | null;
   created_at?: string;
+  extra_json?: { image_calls?: unknown } | null;
 };
+
+function turnHasBody(m: ChatTurn): boolean {
+  if (String(m.content || '').trim()) return true;
+  const calls = m.extra_json?.image_calls;
+  return Array.isArray(calls) && calls.length > 0;
+}
 
 export function usableTurns<T extends ChatTurn>(msgs: T[]): T[] {
   return msgs.filter(
@@ -15,26 +22,34 @@ export function usableTurns<T extends ChatTurn>(msgs: T[]): T[] {
       (m.role === 'user' || m.role === 'assistant') &&
       m.status !== 'pending' &&
       m.status !== 'error' &&
-      String(m.content || '').trim()
+      turnHasBody(m)
   );
+}
+
+/** Same window buildChatContext sends: full thread, or summary + prefix + recent tail. */
+export function windowTurns<T extends ChatTurn>(
+  msgs: T[],
+  summary?: string | null
+): { summaryText: string | null; turns: T[] } {
+  const turns = usableTurns(msgs);
+  if (turns.length <= KEEP_PREFIX + MAX_RECENT) return { summaryText: null, turns };
+  const summaryText = summary?.trim() || null;
+  return {
+    summaryText,
+    turns: [...turns.slice(0, KEEP_PREFIX), ...turns.slice(-MAX_RECENT)],
+  };
 }
 
 export function buildChatContext(
   msgs: ChatTurn[],
   summary?: string | null
 ): { role: string; content: string }[] {
-  const turns = usableTurns(msgs);
+  const { summaryText, turns } = windowTurns(msgs, summary);
   const mapped = turns.map((m) => ({ role: m.role, content: m.content }));
-
-  if (mapped.length <= KEEP_PREFIX + MAX_RECENT) return mapped;
-
-  const prefix = mapped.slice(0, KEEP_PREFIX);
-  const recent = mapped.slice(-MAX_RECENT);
-  const text = summary?.trim();
-  if (text) {
-    return [{ role: 'system', content: `[对话摘要]\n${text}` }, ...prefix, ...recent];
+  if (summaryText) {
+    return [{ role: 'system', content: `[对话摘要]\n${summaryText}` }, ...mapped];
   }
-  return [...prefix, ...recent];
+  return mapped;
 }
 
 export function shouldAutoSummarize(

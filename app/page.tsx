@@ -308,6 +308,32 @@ export default function GrokStudio() {
           try {
             const json = JSON.parse(payload);
             const delta = json.choices?.[0]?.delta?.content || '';
+            if (json.studio_status === 'generating') {
+              setMessages(prev =>
+                prev.map(m =>
+                  m.id === pendingMsg.id
+                    ? { ...m, extra_json: { ...(m.extra_json || {}), drawing: true }, status: 'pending' as const }
+                    : m
+                )
+              );
+            }
+            if (json.studio_image?.id) {
+              const img = json.studio_image;
+              setImages(prev => (prev.some(x => x.id === img.id) ? prev : [img, ...prev]));
+              setMessages(prev =>
+                prev.map(m => {
+                  if (m.id !== pendingMsg.id) return m;
+                  const images = Array.isArray(m.extra_json?.images) ? [...m.extra_json.images] : [];
+                  if (!images.some((x: { id?: string }) => x.id === img.id)) images.push(img);
+                  return {
+                    ...m,
+                    extra_json: { ...(m.extra_json || {}), images, drawing: false },
+                    status: 'pending' as const,
+                  };
+                })
+              );
+              scrollToBottom();
+            }
             if (delta) {
               assistantText += delta;
               setMessages(prev =>
@@ -324,11 +350,13 @@ export default function GrokStudio() {
       }
 
       await loadMessages(convId);
+      await loadImages(convId);
       await loadConversations();
     } catch (e: any) {
       // 关页/断网只中断了浏览器连接，服务端还在写。不要把 pending 标成失败。
       await pollMessageUntilDone(convId, pendingMsg.id);
       await loadMessages(convId);
+      await loadImages(convId);
       if (e.name !== 'AbortError') {
         const still = (await fetch(`/api/conversations/${convId}/messages`).then(r => r.json()).catch(() => [])) as Message[];
         const msg = still.find((m) => m.id === pendingMsg.id);

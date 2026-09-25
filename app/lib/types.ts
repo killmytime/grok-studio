@@ -23,7 +23,7 @@ export interface Message {
 
 export interface ImageAsset {
   id: string;
-  conversation_id: string;
+  conversation_id: string | null;
   message_id: string | null;
   kind: 'generate' | 'edit' | 'upload';
   prompt: string;

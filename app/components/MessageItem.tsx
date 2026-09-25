@@ -188,11 +188,30 @@ export default function MessageItem({ message, onRetry, onDelete, onEdit, canSpe
               </ReactMarkdown>
             </div>
 
+            {Array.isArray(message.extra_json?.images) && message.extra_json.images.length > 0 && (
+              <div className="mt-2 space-y-2">
+                {message.extra_json.images.map((img: { id: string; file_path?: string; thumb_path?: string; prompt?: string }) => (
+                  <figure key={img.id} className="max-w-xs">
+                    {(img.thumb_path || img.file_path) && (
+                      <img
+                        src={`/api/files/${img.thumb_path || img.file_path}`}
+                        alt={img.prompt || ''}
+                        className="max-h-64 w-full rounded-md bg-black object-contain"
+                      />
+                    )}
+                    {img.prompt && (
+                      <figcaption className="mt-1 text-[10px] leading-snug opacity-70">{img.prompt}</figcaption>
+                    )}
+                  </figure>
+                ))}
+              </div>
+            )}
+
             {message.extra_json?.model && (
               <div className="text-[10px] opacity-60 mt-1">{message.extra_json.model}</div>
             )}
             {message.status === 'pending' && (
-              <div className="text-[10px] opacity-60 mt-1">正在生成...</div>
+              <div className="text-[10px] opacity-60 mt-1">{message.extra_json?.drawing ? '正在画图…' : '正在生成...'}</div>
             )}
             {message.extra_json?.audio_path && (
               <audio

@@ -15,6 +15,8 @@ const TINY_PNG =
 
 type Captured = { method?: string; url: string; authorization: string; body: any };
 
+const upstreamState: { responses: 'missing' | 'image' } = { responses: 'missing' };
+
 function startFakeOpenAI() {
   const requests: Captured[] = [];
   const server = createServer(async (req, res) => {
@@ -38,6 +40,28 @@ function startFakeOpenAI() {
     if (req.method === 'GET' && (req.url || '').includes('/models')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ object: 'list', data: [{ id: 'sd-cpp-local', object: 'model' }] }));
+      return;
+    }
+
+    if ((req.url || '').includes('/responses')) {
+      if (upstreamState.responses === 'image') {
+        const item = {
+          type: 'image_generation_call',
+          id: 'ig_test_call',
+          status: 'completed',
+          prompt: 'a red silk shirt, woodblock',
+          aspect_ratio: '16:9',
+          result: TINY_PNG,
+        };
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: '画好了' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'response.output_item.done', item })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'response.completed', response: { id: 'resp_test', output: [item] } })}\n\n`);
+        res.end();
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found', url: req.url }));
       return;
     }
 
@@ -133,6 +157,7 @@ describe('capability providers (shipped routes)', () => {
   });
 
   beforeEach(() => {
+    upstreamState.responses = 'missing';
     chatUp.requests.length = 0;
     imageUp.requests.length = 0;
     resetQueue?.();
@@ -316,6 +341,65 @@ describe('capability providers (shipped routes)', () => {
     expect(sent.at(-1).content).toBe('turn-23');
     expect(sent).toHaveLength(1 + 3 + 16);
     expect(sent.some((m: any) => m.content === 'turn-3')).toBe(false);
+  });
+
+  it('Grok chat saves image tool output with the model prompt, not the user text', async () => {
+    upstreamState.responses = 'image';
+    db.setSetting('chat_base_url', chatUp.baseUrl);
+    db.setSetting('chat_api_key', 'sk-chat-bearer');
+    const conv = db.createConversation('chat-draw');
+    db.addMessage(conv.id, 'user', 'draw a shirt');
+    chatUp.requests.length = 0;
+
+    const res = await chatRoute.POST(new Request('http://localhost/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: conv.id }),
+    }));
+    expect(res.status).toBe(200);
+    const text = await drainStream(res);
+    expect(text).toContain('画好了');
+    expect(text).toContain('studio_image');
+    expect(chatUp.requests.some((r) => r.url.includes('/responses'))).toBe(true);
+    expect(chatUp.requests.some((r) => r.url.includes('/chat/completions'))).toBe(false);
+    const hit = chatUp.requests.find((r) => r.url.includes('/responses'));
+    expect(hit!.body.tools).toEqual([{ type: 'image_generation' }]);
+    expect(hit!.body.store).toBe(false);
+    expect(hit!.body.input.some((item: any) => item.role === 'user' && item.content === 'draw a shirt')).toBe(true);
+
+    const imgs = db.listImages(conv.id);
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].prompt).toBe('a red silk shirt, woodblock');
+    expect(imgs[0].aspect_ratio).toBe('16:9');
+    expect(imgs[0].kind).toBe('generate');
+    expect(imgs[0].extra_json.source).toBe('chat');
+    expect(imgs[0].extra_json.call.prompt).toBe('a red silk shirt, woodblock');
+    expect(imgs[0].extra_json.call.result).toBeUndefined();
+    expect(imgs[0].extra_json.response_id).toBe('resp_test');
+    expect(JSON.stringify(imgs[0].extra_json)).not.toContain(TINY_PNG);
+
+    const assistant = db.listMessages(conv.id).find((m: any) => m.role === 'assistant');
+    expect(assistant.content).toContain('画好了');
+    expect(assistant.extra_json.images[0].id).toBe(imgs[0].id);
+    expect(assistant.extra_json.image_calls[0].result).toBeUndefined();
+  });
+
+  it('Ollama chat does not call the Grok image tool', async () => {
+    db.setSetting('chat_provider', 'ollama');
+    db.setSetting('chat_base_url', chatUp.baseUrl);
+    db.setSetting('chat_api_key', '');
+    const conv = db.createConversation('ollama-no-draw');
+    db.addMessage(conv.id, 'user', 'hi');
+    chatUp.requests.length = 0;
+    const res = await chatRoute.POST(new Request('http://localhost/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: conv.id }),
+    }));
+    expect(res.status).toBe(200);
+    await drainStream(res);
+    expect(chatUp.requests.some((r) => r.url.includes('/responses'))).toBe(false);
+    expect(chatUp.requests.some((r) => r.url.includes('/chat/completions'))).toBe(true);
   });
 
   it('Ollama chat succeeds with empty API key', async () => {

@@ -52,6 +52,14 @@ docker compose up -d --build
 
 仓库 Settings → Actions → Workflow permissions 需要 **Read and write**，否则镜像推不上。
 
+## 聊天里的生图
+
+聊天供应商是 Grok 时，`POST /api/chat` 走 `/v1/responses`，带上 `image_generation` 工具，`store` 为 false。流里的图落到 `data/images/`，库里记模型写出的提示词和标量参数，不存 base64。接着聊时，最近几张会按文件再送回去，所以模型能改刚才的图。
+
+中转返回 404、405 或 501 时，这一次退回 `/v1/chat/completions`。Ollama 不走 Responses。
+
+`images.conversation_id` 可空，外键是 `ON DELETE SET NULL`。删会话后画廊把这些图放在「未归类」。旧库启动时会改这张表。`GET /api/images` 在每个进程里扫一次 `data/images/`，把没有记录的文件补登记进来。
+
 ## 目录
 
 ```
