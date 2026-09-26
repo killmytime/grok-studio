@@ -7,7 +7,7 @@ import {
   resolveImageGenerateBackend,
 } from '@/app/lib/backends';
 import { INTEGRATIONS } from '@/app/lib/integrations/catalog';
-import { ensureDefaultVendor, listBindings, listVendors } from '@/app/lib/vendors';
+import { ensureComfyVendor, ensureDefaultVendor, listBindings, listVendors } from '@/app/lib/vendors';
 import { accessEnabled } from '@/lib/access';
 import { APP_VERSION } from '@/app/lib/version';
 
@@ -41,6 +41,7 @@ export async function GET() {
   const dbSettings = getAllSettings();
   const settings = { ...DEFAULTS, ...dbSettings };
   ensureDefaultVendor();
+  ensureComfyVendor();
   const chat = resolveChatBackend();
   const generate = resolveImageGenerateBackend();
   const edit = resolveImageEditBackend();

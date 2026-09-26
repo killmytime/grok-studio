@@ -3,6 +3,7 @@ import { INTEGRATIONS, getIntegration, type Capability } from '@/app/lib/integra
 import {
   defaultModelsForKind,
   deleteVendor,
+  ensureComfyVendor,
   ensureDefaultVendor,
   listVendors,
   upsertVendor,
@@ -11,6 +12,7 @@ import {
 export async function GET() {
   const vendors = listVendors();
   if (vendors.length === 0) ensureDefaultVendor();
+  ensureComfyVendor();
   return NextResponse.json({
     kinds: INTEGRATIONS,
     vendors: listVendors().map((v) => ({ ...v, api_key: v.api_key ? '********' : '' })),

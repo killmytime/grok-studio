@@ -180,6 +180,28 @@ export function defaultModelsForKind(kind: string): Array<{ model: string; capab
   return [...byModel.entries()].map(([model, capabilities]) => ({ model, capabilities }));
 }
 
+/**
+ * First boot with COMFY_BASE_URL creates the ComfyUI vendor and points 生图/改图 at qwen-image-2.1.
+ * Later restarts leave an existing ComfyUI row and its bindings alone.
+ */
+export function ensureComfyVendor(): Vendor | undefined {
+  const base = (process.env.COMFY_BASE_URL || '').trim();
+  if (!base) return undefined;
+  const existing = listVendors().find((v) => getIntegration(v.kind).id === 'comfyui');
+  if (existing) return existing;
+  const vendor = upsertVendor({
+    id: 'comfyui',
+    kind: 'comfyui',
+    label: 'ComfyUI',
+    base_url: base,
+    api_key: '',
+    models: defaultModelsForKind('comfyui'),
+  });
+  setBinding('image.generate', vendor.id, 'qwen-image-2.1');
+  setBinding('image.edit', vendor.id, 'qwen-image-2.1');
+  return vendor;
+}
+
 /** Ensure a Grok vendor row exists so the UI has the baseline. Does not create bindings (legacy settings stay in charge until the UI assigns). */
 export function ensureDefaultVendor(): Vendor {
   const existing = getVendor('grok');
