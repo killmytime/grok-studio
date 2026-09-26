@@ -10,6 +10,8 @@ import { resolveImageGenerateBackend, bearerHeaders, type ImageGenerateBackend }
 import { canonicalIntegrationId, hasCapability, getIntegration } from '../integrations/catalog';
 import { aspectToSize, formatOpenAISize, normalizeB64, unpackImageItems, withSdCppExtraArgs } from './image-unpack';
 import { jetsonCancelJob, jetsonGetJob, jetsonImagesGenerations } from './jetson';
+import { ComfyError } from './comfy/client';
+import { cancelComfyImage, reconcileComfyImage, submitComfyGenerate } from './comfy/run';
 import type { ImageAsset } from '../types';
 
 const jetsonInflight = new Map<string, AbortController>();
@@ -211,10 +213,21 @@ type GenerateFn = (opts: {
   backend?: ImageGenerateBackend;
 }) => Promise<{ images: ImageAsset[]; job_id?: string }>;
 
+async function comfyGenerate(opts: Parameters<GenerateFn>[0]): Promise<{ images: ImageAsset[]; job_id?: string }> {
+  if (!opts.backend) throw new ProviderError('ComfyUI 地址未配置', 400);
+  try {
+    return await submitComfyGenerate({ ...opts, backend: opts.backend });
+  } catch (e) {
+    if (e instanceof ComfyError) throw new ProviderError(e.message, e.status, e.body);
+    throw e;
+  }
+}
+
 /** Plug in a new generate integration by adding it to the catalog and this map. */
 const GENERATE_ADAPTERS: Record<string, GenerateFn> = {
   grok: grokGenerate,
   imagen: jetsonGenerate,
+  comfyui: comfyGenerate,
 };
 
 export async function generateImages(opts: {
@@ -240,6 +253,7 @@ export async function generateImages(opts: {
 
 export async function reconcilePendingImage(img: ImageAsset): Promise<ImageAsset | undefined> {
   if (!img || img.status !== 'pending') return img;
+  if (img.extra_json?.protocol === 'comfyui') return reconcileComfyImage(img);
   // OpenAI imagen is Studio-side in-flight; just re-read the row.
   if (img.extra_json?.protocol === 'openai-images' || !img.job_id) {
     return getImage(img.id) || img;
@@ -275,6 +289,14 @@ export async function reconcilePendingImage(img: ImageAsset): Promise<ImageAsset
 
 export async function cancelPendingImage(img: ImageAsset): Promise<ImageAsset | undefined> {
   if (!img) return img;
+  if (img.extra_json?.protocol === 'comfyui') {
+    try {
+      await cancelComfyImage(img);
+    } catch {
+      // still mark cancelled locally
+    }
+    return updateImage(img.id, { status: 'error', error_message: 'cancelled' }) || getImage(img.id);
+  }
   jetsonInflight.get(img.id)?.abort();
   jetsonInflight.delete(img.id);
   const backend = resolveImageGenerateBackend();

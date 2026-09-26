@@ -1,4 +1,5 @@
-import { bearerHeaders, normalizeChatBaseUrl, normalizeImagenBaseUrl, ttsServiceRoot } from '../backends';
+import { bearerHeaders, comfyRoot, normalizeChatBaseUrl, normalizeImagenBaseUrl, ttsServiceRoot } from '../backends';
+import { ComfyError, listUnets } from './comfy/client';
 import { canonicalIntegrationId, getIntegration, type Capability } from '../integrations/catalog';
 
 export interface RemoteModel {
@@ -13,6 +14,7 @@ export function modelsBaseUrl(kind: string, raw: string): string {
   if (k === 'imagen') return normalizeImagenBaseUrl(trimmed);
   if (k === 'ollama') return normalizeChatBaseUrl(trimmed, 'ollama');
   if (k === 'qwen3tts') return ttsServiceRoot(trimmed);
+  if (k === 'comfyui') return comfyRoot(trimmed);
   if (/\/v1$/i.test(trimmed)) return trimmed;
   return trimmed;
 }
@@ -23,6 +25,7 @@ export function guessModelCapabilities(kind: string, modelId: string): Capabilit
   const id = modelId.toLowerCase();
   let guessed: Capability[];
   if (integration.id === 'imagen') guessed = ['image.generate'];
+  else if (integration.id === 'comfyui') guessed = ['image.generate', 'image.edit'];
   else if (integration.id === 'qwen3tts') guessed = ['speech'];
   else if (integration.id === 'ollama') guessed = ['chat'];
   else if (/imagine|image|dall|flux|sd-|diffusion|turbo/.test(id) && !/chat|instruct|latest$/.test(id)) {
@@ -64,6 +67,23 @@ export async function listRemoteModels(opts: {
     throw err;
   }
   const headers = bearerHeaders(opts.apiKey || '');
+  if (kind === 'comfyui') {
+    try {
+      const ids = await listUnets(base, opts.apiKey || '');
+      return {
+        endpoint: `${base}/models/unet`,
+        models: ids.map((id) => ({ id, suggested: guessModelCapabilities(kind, id) })),
+      };
+    } catch (e) {
+      if (e instanceof ComfyError) {
+        const err = new Error(e.message) as Error & { status: number; body: unknown };
+        err.status = e.status;
+        err.body = e.body;
+        throw err;
+      }
+      throw e;
+    }
+  }
   const endpoint = kind === 'qwen3tts' ? `${base}/v1/audio/voices` : `${base}/models`;
   let res = await fetch(endpoint, { headers });
   let data = await res.json().catch(() => ({}));

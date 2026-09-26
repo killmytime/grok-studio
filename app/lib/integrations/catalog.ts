@@ -78,6 +78,23 @@ export const INTEGRATIONS: IntegrationManifest[] = [
     notes: '只支持文生图，不能改图。改图仍走 Grok。',
   },
   {
+    id: 'comfyui',
+    aliases: ['comfy', 'qwen-image'],
+    label: 'ComfyUI (Qwen Image 2.1)',
+    shortLabel: 'ComfyUI',
+    capabilities: ['image.generate', 'image.edit'],
+    requiresApiKey: false,
+    defaultModels: {
+      'image.generate': 'qwen-image-2.1',
+      'image.edit': 'qwen-image-2.1',
+    },
+    extraFields: [
+      { key: 'seed', label: 'Seed', hint: '空=每次随机', placeholder: '可选' },
+      { key: 'steps', label: 'Steps', hint: '空=工作流默认 8', placeholder: '8' },
+    ],
+    notes: 'Qwen Image 2.1。正向提示词必填；负向留空则用工作流默认。地址填 ComfyUI 根。',
+  },
+  {
     id: 'qwen3tts',
     aliases: ['tts', 'qwen3-tts'],
     label: 'Qwen3TTS',

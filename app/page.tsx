@@ -42,6 +42,7 @@ export default function GrokStudio() {
   const [isNSFW, setIsNSFW] = useState(false);
 
   const [input, setInput] = useState('');
+  const [negativePrompt, setNegativePrompt] = useState('');
   const [selectedAspect, setSelectedAspect] = useState('1:1');
   const [selectedResolution, setSelectedResolution] = useState('1k');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -208,7 +209,7 @@ export default function GrokStudio() {
     if (imagePollRef.current.has(imageId)) return;
     imagePollRef.current.add(imageId);
     try {
-      for (let i = 0; i < 180; i++) {
+      for (let i = 0; i < 600; i++) {
         const res = await fetch(`/api/images/${imageId}`);
         if (!res.ok) break;
         const img = await res.json();
@@ -438,6 +439,7 @@ export default function GrokStudio() {
           aspect_ratio: selectedAspect,
           resolution: selectedResolution || settings.default_resolution || '1k',
           n: settings.default_n,
+          negative_prompt: activeBackends.generate.integration === 'comfyui' ? (negativePrompt.trim() || undefined) : undefined,
         }),
         signal: controller.signal,
       });
@@ -494,6 +496,7 @@ export default function GrokStudio() {
           conversation_id: currentConvId,
           aspect_ratio: selectedAspect,
           resolution: selectedResolution || settings.default_resolution || '1k',
+          negative_prompt: activeBackends.edit.integration === 'comfyui' ? (negativePrompt.trim() || undefined) : undefined,
         }),
         signal: controller.signal,
       });
@@ -511,6 +514,9 @@ export default function GrokStudio() {
       if (data.images) {
         setImages(prev => [...data.images, ...prev]);
         setCurrentImage(data.images[0] || null);
+        for (const img of data.images) {
+          if (img.status === 'pending') pollImageUntilDone(img.id);
+        }
       }
     } catch (e: any) {
       if (e.name !== 'AbortError') {
@@ -597,7 +603,7 @@ export default function GrokStudio() {
     setConversations(prev => prev.map(c => c.id === id ? { ...c, title: newTitle } : c));
   }
 
-  async function testConnection(type: 'chat' | 'image' | 'jetson' | 'tts') {
+  async function testConnection(type: 'chat' | 'image' | 'jetson' | 'comfyui' | 'tts') {
     const res = await fetch('/api/health', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1000,6 +1006,19 @@ export default function GrokStudio() {
               </button>
             ))}
           </div>
+
+          {(activeBackends.generate.integration === 'comfyui' || activeBackends.edit.integration === 'comfyui') && (
+            <div className="mb-2 flex items-center gap-2">
+              <span className="shrink-0 text-xs text-zinc-500">负向</span>
+              <input
+                className="w-full rounded-md border border-zinc-800 bg-transparent px-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600"
+                placeholder="可空。空着就用工作流默认：low quality, bad anatomy…"
+                value={negativePrompt}
+                onChange={(e) => setNegativePrompt(e.target.value)}
+                disabled={isStreaming || imageBusy || !currentConvId}
+              />
+            </div>
+          )}
 
           <Textarea
             className="chat-input min-h-[44px] max-h-[120px] text-base px-3 py-2 md:min-h-[48px] resize-y"
@@ -1432,6 +1451,7 @@ export default function GrokStudio() {
                         ['像素', previewImage.width && previewImage.height ? `${previewImage.width} × ${previewImage.height}` : '—'],
                         ['请求尺寸', previewImage.extra_json?.size || '—'],
                         ['种子', previewImage.extra_json?.seed ?? '—'],
+                        ['负向', previewImage.negative_prompt || '—'],
                         ['步数', previewImage.extra_json?.steps ?? '—'],
                         ['张数', previewImage.extra_json?.n ?? previewImage.n_index ?? '—'],
                         ['生成时间', previewImage.created_at ? new Date(previewImage.created_at).toLocaleString() : '—'],

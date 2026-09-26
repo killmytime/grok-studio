@@ -84,6 +84,7 @@ export default function GalleryView() {
   const [previewEntered, setPreviewEntered] = useState(false);
   const [editPrompt, setEditPrompt] = useState('');
   const [genPrompt, setGenPrompt] = useState('');
+  const [negativePrompt, setNegativePrompt] = useState('');
   const [aspect, setAspect] = useState('1:1');
   const [resolution, setResolution] = useState('1k');
   const [targetConvId, setTargetConvId] = useState('');
@@ -205,7 +206,7 @@ export default function GalleryView() {
     if (pollRef.current.has(id)) return;
     pollRef.current.add(id);
     try {
-      for (let i = 0; i < 180; i++) {
+      for (let i = 0; i < 600; i++) {
         const res = await fetch(`/api/images/${id}`);
         if (!res.ok) break;
         const img = await res.json();
@@ -261,6 +262,7 @@ export default function GalleryView() {
           aspect_ratio: aspect,
           resolution,
           n: settings?.default_n || '1',
+          negative_prompt: active?.generate.integration === 'comfyui' ? (negativePrompt.trim() || undefined) : undefined,
         }),
       });
       const data = await res.json();
@@ -313,6 +315,7 @@ export default function GalleryView() {
           conversation_id: preview.conversation_id,
           aspect_ratio: aspect,
           resolution,
+          negative_prompt: active?.edit.integration === 'comfyui' ? (negativePrompt.trim() || undefined) : undefined,
         }),
       });
       const data = await res.json();
@@ -690,6 +693,15 @@ export default function GalleryView() {
               ))}
             </select>
           </div>
+          {active?.generate.integration === 'comfyui' && (
+            <input
+              className="mb-2 w-full rounded-md border border-white/10 bg-transparent px-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600"
+              placeholder="负向提示词，可空。空着就用工作流默认"
+              value={negativePrompt}
+              onChange={(e) => setNegativePrompt(e.target.value)}
+              disabled={busy}
+            />
+          )}
           <div className="flex items-end gap-2">
             <Textarea
               className="min-h-[40px] max-h-24 flex-1 resize-y border-white/10 bg-transparent text-sm"
@@ -779,6 +791,15 @@ export default function GalleryView() {
             <p className="mb-2 max-h-16 overflow-auto text-xs leading-relaxed text-zinc-400">
               {preview.prompt || '（无提示词）'}
             </p>
+            {active?.edit.integration === 'comfyui' && (
+              <input
+                className="mb-2 w-full rounded-md border border-white/10 bg-transparent px-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600"
+                placeholder="负向提示词，可空。空着就用工作流默认"
+                value={negativePrompt}
+                onChange={(e) => setNegativePrompt(e.target.value)}
+                disabled={busy || !canEdit}
+              />
+            )}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <Textarea
                 className="min-h-[40px] max-h-20 flex-1 resize-y border-white/10 text-sm"

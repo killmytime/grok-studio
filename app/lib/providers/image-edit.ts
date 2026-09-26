@@ -5,6 +5,8 @@ import { bearerHeaders, resolveImageEditBackend, type CapabilityBackend } from '
 import { getIntegration, hasCapability } from '../integrations/catalog';
 import { normalizeB64, unpackImageItems } from './image-unpack';
 import { ProviderError } from './image-generate';
+import { ComfyError } from './comfy/client';
+import { submitComfyEdit } from './comfy/run';
 import type { ImageAsset } from '../types';
 
 export async function grokEdit(opts: {
@@ -14,6 +16,7 @@ export async function grokEdit(opts: {
   aspect_ratio?: string;
   resolution?: string;
   conversation_id: string;
+  negative_prompt?: string;
   backend?: CapabilityBackend;
 }): Promise<{ images: ImageAsset[]; mode?: string }> {
   const backend = opts.backend || resolveImageEditBackend();
@@ -146,10 +149,36 @@ export async function grokEdit(opts: {
   throw new ProviderError('Edit compatibility mode set to error only', 400);
 }
 
+async function comfyEdit(opts: {
+  prompt: string;
+  image_id: string;
+  n?: number;
+  aspect_ratio?: string;
+  resolution?: string;
+  conversation_id: string;
+  negative_prompt?: string;
+  backend?: CapabilityBackend;
+}): Promise<{ images: ImageAsset[]; mode?: string }> {
+  const backend = opts.backend || resolveImageEditBackend();
+  if (!hasCapability(backend.provider, 'image.edit')) {
+    throw new ProviderError(`${getIntegration(backend.provider).label} 不支持改图`, 400);
+  }
+  const sourceImg = getImage(opts.image_id);
+  if (!sourceImg) throw new ProviderError('Source image not found', 404);
+  if (sourceImg.status === 'pending') throw new ProviderError('Source image is still generating', 409);
+  try {
+    return await submitComfyEdit({ ...opts, backend, source: sourceImg });
+  } catch (e) {
+    if (e instanceof ComfyError) throw new ProviderError(e.message, e.status, e.body);
+    throw e;
+  }
+}
+
 type EditFn = typeof grokEdit;
 
 const EDIT_ADAPTERS: Record<string, EditFn> = {
   grok: grokEdit,
+  comfyui: comfyEdit,
 };
 
 export async function editImages(opts: {
@@ -159,6 +188,7 @@ export async function editImages(opts: {
   aspect_ratio?: string;
   resolution?: string;
   conversation_id: string;
+  negative_prompt?: string;
 }): Promise<{ images: ImageAsset[]; mode?: string }> {
   const backend = resolveImageEditBackend();
   if (!hasCapability(backend.provider, 'image.edit')) {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { resolveChatBackend, resolveImageGenerateBackend, resolveSpeechBackend, bearerHeaders } from '@/app/lib/backends';
 import { assertChatConfigured, fetchChatCompletions } from '@/app/lib/providers/chat';
 import { jetsonHealth } from '@/app/lib/providers/jetson';
+import { comfyHealth } from '@/app/lib/providers/comfy/client';
 import { ttsHealth } from '@/app/lib/providers/tts';
 import { canonicalIntegrationId } from '@/app/lib/integrations/catalog';
 import { APP_NAME, APP_VERSION } from '@/app/lib/version';
@@ -11,7 +12,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const { type } = await req.json(); // 'chat' | 'image' | 'generate' | 'jetson' | 'imagen' | 'tts'
+  const { type } = await req.json(); // 'chat' | 'image' | 'generate' | 'jetson' | 'imagen' | 'comfyui' | 'tts'
 
   try {
     if (type === 'tts' || type === 'speech') {
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
     const backend = resolveImageGenerateBackend();
     const genId = canonicalIntegrationId(backend.provider);
     const probeImagen = type === 'jetson' || type === 'imagen' || genId === 'imagen';
+    const probeComfy = type === 'comfyui' || type === 'comfy' || genId === 'comfyui';
 
     if (probeImagen) {
       if (!backend.jetsonGatewayUrl) {
@@ -57,6 +59,19 @@ export async function POST(req: Request) {
         status: result.status,
         body: result.body,
         backend: backend.jetsonGatewayUrl,
+      });
+    }
+
+    if (probeComfy) {
+      if (!backend.baseUrl) {
+        return NextResponse.json({ ok: false, error: 'ComfyUI 地址未配置' }, { status: 400 });
+      }
+      const result = await comfyHealth(backend.baseUrl, backend.apiKey);
+      return NextResponse.json({
+        ok: result.ok,
+        status: result.status,
+        body: result.body,
+        backend: backend.baseUrl,
       });
     }
 

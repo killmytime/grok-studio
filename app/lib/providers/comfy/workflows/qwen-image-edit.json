@@ -1,0 +1,86 @@
+{
+  "9": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": ["65", 0]
+    },
+    "class_type": "SaveImage",
+    "_meta": { "title": "保存图像" }
+  },
+  "62": {
+    "inputs": {
+      "clip_name": "qwen3vl_8b_w4a8_heretic.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": { "title": "加载CLIP" }
+  },
+  "63": {
+    "inputs": {
+      "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": { "title": "加载VAE" }
+  },
+  "65": {
+    "inputs": {
+      "samples": ["70", 0],
+      "vae": ["63", 0]
+    },
+    "class_type": "VAEDecode",
+    "_meta": { "title": "VAE解码" }
+  },
+  "66": {
+    "inputs": {
+      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": { "title": "UNet加载器" }
+  },
+  "69": {
+    "inputs": {
+      "shift": 3,
+      "sampling": "flow",
+      "model": ["66", 0]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": { "title": "采样算法（AuraFlow）" }
+  },
+  "70": {
+    "inputs": {
+      "seed": 42,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": ["69", 0],
+      "positive": ["81", 0],
+      "negative": ["81", 1],
+      "latent_image": ["81", 2]
+    },
+    "class_type": "KSampler",
+    "_meta": { "title": "K采样器" }
+  },
+  "80": {
+    "inputs": {
+      "image": "studio-edit.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": { "title": "加载图像" }
+  },
+  "81": {
+    "inputs": {
+      "clip": ["62", 0],
+      "prompt": "",
+      "negative_prompt": "low quality, bad anatomy, extra digits, missing digits, extra limbs, missing limbs",
+      "vae": ["63", 0],
+      "resolution": 1024,
+      "image_1": ["80", 0]
+    },
+    "class_type": "TextEncodeQwenImage21",
+    "_meta": { "title": "Qwen Image 2.1 文本编码" }
+  }
+}

@@ -3,7 +3,7 @@ import { editImages } from '@/app/lib/providers/image-edit';
 import { ProviderError } from '@/app/lib/providers/image-generate';
 
 export async function POST(req: Request) {
-  const { prompt, image_id, n = 1, aspect_ratio = 'auto', resolution = '1k', conversation_id } = await req.json();
+  const { prompt, image_id, n = 1, aspect_ratio = 'auto', resolution = '1k', conversation_id, negative_prompt } = await req.json();
   if (!conversation_id || !image_id) {
     return NextResponse.json({ error: 'conversation_id and image_id required' }, { status: 400 });
   }
@@ -16,6 +16,7 @@ export async function POST(req: Request) {
       aspect_ratio,
       resolution,
       conversation_id,
+      negative_prompt,
     });
     return NextResponse.json(result);
   } catch (e: any) {

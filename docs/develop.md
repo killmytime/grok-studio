@@ -60,6 +60,10 @@ docker compose up -d --build
 
 `images.conversation_id` 可空，外键是 `ON DELETE SET NULL`。删会话后画廊把这些图放在「未归类」。旧库启动时会改这张表。`GET /api/images` 在每个进程里扫一次 `data/images/`，把没有记录的文件补登记进来。
 
+## ComfyUI
+
+生图用 `app/lib/providers/comfy/workflows/qwen-image.json`（已在本机跑通的 API 格式）。改图是另一张图 `qwen-image-edit.json`：同一套 CLIP / UNet / VAE，文本走 `TextEncodeQwenImage21`，参考图从 `LoadImage` 进去。正向必填；负向留空就保留工作流里的那句。地址只来自供应商 URL，代码里不写死生产机。提交 `/prompt` 后立刻返回 pending，后台轮询 `/history`，再从 `/view` 把图存进 `data/images/`。
+
 ## 目录
 
 ```

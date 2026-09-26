@@ -9,7 +9,7 @@ import {
 import { getBinding, getVendor, type Vendor } from './vendors';
 
 export type ChatProviderId = 'grok' | 'ollama';
-export type ImageGenerateProviderId = 'grok' | 'imagen' | 'jetson';
+export type ImageGenerateProviderId = 'grok' | 'imagen' | 'jetson' | 'comfyui';
 
 export interface CapabilityBackend {
   provider: string;
@@ -36,6 +36,11 @@ export function normalizeImagenBaseUrl(url: string): string {
 
 /** Qwen3TTS health is /health, speech is /v1/audio/speech — root has no required /v1 suffix. */
 export function ttsServiceRoot(url: string): string {
+  return (url || '').replace(/\/+$/, '').replace(/\/v1$/i, '');
+}
+
+/** ComfyUI routes (/prompt, /history, /view) live on the server root, not /v1. */
+export function comfyRoot(url: string): string {
   return (url || '').replace(/\/+$/, '').replace(/\/v1$/i, '');
 }
 
@@ -91,6 +96,7 @@ function fromVendor(vendor: Vendor, model: string, cap: Capability): CapabilityB
   if (kind === 'ollama') baseUrl = normalizeChatBaseUrl(baseUrl, 'ollama');
   if (kind === 'imagen') baseUrl = normalizeImagenBaseUrl(baseUrl);
   if (kind === 'qwen3tts') baseUrl = ttsServiceRoot(baseUrl);
+  if (kind === 'comfyui') baseUrl = comfyRoot(baseUrl);
   const resolvedModel = firstNonEmpty(model, integration.defaultModels[cap], model);
   return { provider: kind, baseUrl, apiKey, model: resolvedModel };
 }
@@ -192,7 +198,16 @@ export function resolveImageGenerateBackend(): ImageGenerateBackend {
   const jetsonSteps = firstNonEmpty(getSetting('jetson_steps', ''), process.env.JETSON_STEPS);
   const jetsonSeed = firstNonEmpty(getSetting('jetson_seed', ''), process.env.JETSON_SEED);
 
-  return { provider, baseUrl, apiKey, model, jetsonGatewayUrl, jetsonApiKey, jetsonSteps, jetsonSeed };
+  return {
+    provider,
+    baseUrl: provider === 'comfyui' ? comfyRoot(baseUrl) : baseUrl,
+    apiKey,
+    model,
+    jetsonGatewayUrl,
+    jetsonApiKey,
+    jetsonSteps,
+    jetsonSeed,
+  };
 }
 
 export function resolveImageEditBackend(): CapabilityBackend {
@@ -226,7 +241,7 @@ export function resolveImageEditBackend(): CapabilityBackend {
     'grok-imagine-image-2.0'
   );
 
-  return { provider, baseUrl, apiKey, model };
+  return { provider, baseUrl: provider === 'comfyui' ? comfyRoot(baseUrl) : baseUrl, apiKey, model };
 }
 
 export function resolveSpeechBackend(): SpeechBackend | null {

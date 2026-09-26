@@ -411,6 +411,13 @@ export function getImage(id: string) {
   return parseImageRow(db.prepare(`SELECT * FROM images WHERE id = ?`).get(id));
 }
 
+export function listImagesByJob(jobId: string): ImageAsset[] {
+  if (!jobId) return [];
+  const db = getDb();
+  const rows = db.prepare(`SELECT * FROM images WHERE job_id = ? ORDER BY n_index ASC`).all(jobId) as any[];
+  return rows.map((row) => parseImageRow(row)!);
+}
+
 const IMAGE_UPDATE_FIELDS = new Set([
   'status', 'error_message', 'file_path', 'thumb_path', 'mime', 'width', 'height',
   'sha256', 'job_id', 'extra_json', 'model', 'prompt', 'negative_prompt',

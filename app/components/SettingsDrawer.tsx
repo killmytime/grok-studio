@@ -33,7 +33,7 @@ type Binding = { capability: Capability; vendor_id: string; model: string };
 interface Props {
   settings: AppSettings;
   onSave: (s: Partial<AppSettings>) => Promise<void>;
-  onTest: (type: 'chat' | 'image' | 'jetson' | 'tts') => Promise<any>;
+  onTest: (type: 'chat' | 'image' | 'jetson' | 'comfyui' | 'tts') => Promise<any>;
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -92,7 +92,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
     setOpen(false);
   };
 
-  const test = async (type: 'chat' | 'image' | 'jetson' | 'tts') => {
+  const test = async (type: 'chat' | 'image' | 'jetson' | 'comfyui' | 'tts') => {
     setTesting(type);
     setTestResult(null);
     const res = await onTest(type);
@@ -334,7 +334,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                       <Input className="settings-input mt-1" value={v.label} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, label: e.target.value } : x))} />
                     </Field>
                     <Field label="URL">
-                      <Input className="settings-input mt-1" value={v.base_url} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, base_url: e.target.value } : x))} />
+                      <Input className="settings-input mt-1" placeholder={kind.id === 'comfyui' ? 'http://127.0.0.1:8188' : undefined} value={v.base_url} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, base_url: e.target.value } : x))} />
                     </Field>
                     <Field label="API Key">
                       <Input className="settings-input mt-1" type="password" value={v.api_key} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, api_key: e.target.value } : x))} />
@@ -352,7 +352,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                   </div>
                   <div className="flex flex-wrap gap-2 items-center">
                     <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fetchModels(v)} disabled={!!fetching[v.id] || !v.base_url}>
-                      {fetching[v.id] ? '拉取中…' : (kind.id === 'qwen3tts' ? '从 /v1/audio/voices 拉取' : '从 /v1/models 拉取')}
+                      {fetching[v.id] ? '拉取中…' : (kind.id === 'qwen3tts' ? '从 /v1/audio/voices 拉取' : kind.id === 'comfyui' ? '从 /models/unet 拉取' : '从 /v1/models 拉取')}
                     </Button>
                     <select
                       className="settings-input h-7 rounded-md bg-transparent border px-2 text-xs min-w-[160px]"
@@ -369,6 +369,11 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                     </select>
                   </div>
                   {fetchErr[v.id] ? <div className="text-[10px] text-red-400">{fetchErr[v.id]}</div> : null}
+                  {kind.id === 'comfyui' && (
+                    <div className="text-[10px] text-zinc-500">
+                      URL 填 ComfyUI 根地址，例如 http://127.0.0.1:8188。生产环境 http://192.168.1.29:8188 只有写进这里才会连接。正向提示词必填，负向留空就用工作流默认。添加后把「生图」和「改图」都绑到 qwen-image-2.1。改图会把原图交给 Qwen Image 2.1 的参考图节点，比例跟着原图。
+                    </div>
+                  )}
                   {kind.id === 'qwen3tts' && ttsMeta[v.id]?.mode === 'clone' && (
                     <div className="text-[10px] text-amber-400">
                       这是 clone 镜像，没有 vivian。只有 dynamic。请上传 3–10 秒参考音频生成音色，再把「朗读」绑到它。
@@ -443,7 +448,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
             })}
             <div className="flex gap-2">
               <select value={addKind} onChange={(e) => setAddKind(e.target.value)} className="settings-input h-9 rounded-md bg-transparent border px-2 text-sm">
-                {(['ollama', 'imagen', 'qwen3tts', 'grok'] as const).map((id) => {
+                {(['ollama', 'imagen', 'comfyui', 'qwen3tts', 'grok'] as const).map((id) => {
                   const k: IntegrationManifest = getIntegration(id);
                   return <option key={k.id} value={k.id}>{k.label}</option>;
                 })}
@@ -500,7 +505,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
           <div className="flex flex-wrap gap-2 pt-2">
             <Button onClick={handleSave} className="flex-1 min-w-[120px]">保存</Button>
             <Button variant="outline" onClick={() => test('chat')} disabled={!!testing}>测试聊天</Button>
-            <Button variant="outline" onClick={() => test(genKind === 'imagen' ? 'jetson' : 'image')} disabled={!!testing}>测试生图</Button>
+            <Button variant="outline" onClick={() => test(genKind === 'imagen' ? 'jetson' : genKind === 'comfyui' ? 'comfyui' : 'image')} disabled={!!testing}>测试生图</Button>
             <Button variant="outline" onClick={() => test('tts')} disabled={!!testing}>测试朗读就绪</Button>
             <Button
               variant="outline"

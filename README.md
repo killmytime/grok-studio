@@ -2,7 +2,7 @@
 
 本地 AI 工作室：聊天、文生图、改图、朗读、画廊。数据只存在你磁盘上的 `data/`，没有账号、没有云同步。
 
-Grok 是基本盘。Ollama、Imagen（Z-Image-Turbo）、Qwen3TTS 在设置里按需添加，走 OpenAI 兼容接口。
+Grok 是基本盘。Ollama、Imagen（Z-Image-Turbo）、ComfyUI（Qwen Image 2.1）、Qwen3TTS 在设置里按需添加。前两家和朗读走 OpenAI 兼容接口；ComfyUI 走它自己的 `/prompt`。
 
 **想先看怎么用：** [用户手册](docs/user-guide.md)  
 **改代码 / Docker / CI：** [开发者说明](docs/develop.md)
@@ -18,7 +18,7 @@ Grok 是基本盘。Ollama、Imagen（Z-Image-Turbo）、Qwen3TTS 在设置里�
 ### 能做什么
 
 - **聊天**：多会话；长对话会压摘要；编辑用户消息会截断后面再生成。绑 Grok 时可以边聊边画，图进当前会话和画廊
-- **生图 / 改图**：输入框上的按钮走单独绑的生图 / 改图后端。Grok 能生也能改；Imagen 只能生图。成品立刻存本地
+- **生图 / 改图**：输入框上的按钮走单独绑的生图 / 改图后端。Grok 和 ComfyUI（Qwen Image 2.1）能生也能改；Imagen 只能生图。成品立刻存本地
 - **画廊**：`/gallery` 看全部作品，能跳回原来的会话，也能当场生图、改图、删除。删了会话，图还在，归到「未归类」
 - **朗读**：Qwen3TTS，边收边播，缓存到 `data/audio/`
 - **可选整站密码**：IPv4 / IPv6 / 局域网同一道门
