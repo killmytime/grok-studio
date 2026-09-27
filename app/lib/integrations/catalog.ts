@@ -6,6 +6,8 @@ export interface IntegrationField {
   hint?: string;
   kind?: 'url' | 'password' | 'text';
   placeholder?: string;
+  /** Hidden until the vendor card's advanced section is opened. */
+  advanced?: boolean;
 }
 
 export interface IntegrationManifest {
@@ -89,11 +91,11 @@ export const INTEGRATIONS: IntegrationManifest[] = [
       'image.edit': 'qwen-image-2.1',
     },
     extraFields: [
-      { key: 'seed', label: 'Seed', hint: '空=每次随机', placeholder: '可选' },
-      { key: 'steps', label: 'Steps', hint: '空=工作流默认 20。简单站姿 8 步也够', placeholder: '20' },
-      { key: 'denoise', label: '重绘', hint: '空=参考图改图。填 0.85 按原图重画，用来换衣服或加物体', placeholder: '0.85' },
+      { key: 'seed', label: 'Seed', hint: '空=每次随机', placeholder: '可选', advanced: true },
+      { key: 'steps', label: 'Steps', hint: '空=默认 20。简单站姿可以填 8', placeholder: '20', advanced: true },
+      { key: 'denoise', label: '重绘', hint: '空着就是 0.85，改图按原图重画。填 0 只用参考图节点，适合改颜色和背景', placeholder: '0.85', advanced: true },
     ],
-    notes: 'Qwen Image 2.1。CFG 为 1，负向几乎不起作用，约束写在正向里。',
+    notes: 'Qwen Image 2.1。正向写完整句子。种子、步数、重绘在高级配置里。',
   },
   {
     id: 'qwen3tts',

@@ -280,7 +280,7 @@ describe('comfyui qwen image 2.1', () => {
     expect(done[1].n_index).toBe(2);
   });
 
-  it('uploads the source image and edits with the reference-latent workflow', async () => {
+  it('uploads the source image and redraws it at the recommended denoise', async () => {
     const conv = db.createConversation('comfy-edit');
     const source = await saveImageFromBase64(TINY_PNG.toString('base64'), conv.id, 'orig', 'qwen-image-2.1', '1:1', '1k');
     const result = await editImages({
@@ -297,11 +297,11 @@ describe('comfyui qwen image 2.1', () => {
     const upload = server.hits.find((hit) => hit.url.startsWith('/upload/image'));
     expect(upload?.raw).toContain('filename=');
     expect(editHit.body.prompt['80'].inputs.image).toBe('uploaded.png');
-    expect(editHit.body.prompt['81'].class_type).toBe('TextEncodeQwenImage21');
-    expect(editHit.body.prompt['81'].inputs.prompt).toBe('make the coat red');
-    expect(editHit.body.prompt['81'].inputs.negative_prompt).toBe('extra fingers');
-    expect(editHit.body.prompt['81'].inputs.resolution).toBe(1024);
-    expect(editHit.body.prompt['81'].inputs['images.image_1']).toEqual(['80', 0]);
+    expect(editHit.body.prompt['82'].class_type).toBe('VAEEncode');
+    expect(editHit.body.prompt['67'].inputs.text).toBe('make the coat red');
+    expect(editHit.body.prompt['71'].inputs.text).toBe('extra fingers');
+    expect(editHit.body.prompt['70'].inputs.denoise).toBe(0.85);
+    expect(editHit.body.prompt['70'].inputs.latent_image).toEqual(['82', 0]);
     const done = await untilDone(db.getImage, [result.images[0].id]);
     expect(done[0].status).toBe('completed');
     expect(done[0].parent_image_id).toBe(source.id);

@@ -18,7 +18,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy, Menu, Image, MessageCircle, ChevronDown, ChevronUp, Trash2, MoreHorizontal, ShieldAlert, Images, RotateCw } from 'lucide-react';
+import { Send, Image as ImageIcon, Edit3, X, ChevronLeft, ChevronRight, Download, Copy, Menu, Image, MessageCircle, ChevronDown, ChevronUp, Trash2, MoreHorizontal, ShieldAlert, Images, RotateCw, BookOpen } from 'lucide-react';
 import type { Conversation, Message, ImageAsset, AppSettings } from './lib/types';
 import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
@@ -42,7 +42,6 @@ export default function GrokStudio() {
   const [isNSFW, setIsNSFW] = useState(false);
 
   const [input, setInput] = useState('');
-  const [negativePrompt, setNegativePrompt] = useState('');
   const [selectedAspect, setSelectedAspect] = useState('1:1');
   const [selectedResolution, setSelectedResolution] = useState('1k');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -439,7 +438,6 @@ export default function GrokStudio() {
           aspect_ratio: selectedAspect,
           resolution: selectedResolution || settings.default_resolution || '1k',
           n: settings.default_n,
-          negative_prompt: activeBackends.generate.integration === 'comfyui' ? (negativePrompt.trim() || undefined) : undefined,
         }),
         signal: controller.signal,
       });
@@ -496,7 +494,6 @@ export default function GrokStudio() {
           conversation_id: currentConvId,
           aspect_ratio: selectedAspect,
           resolution: selectedResolution || settings.default_resolution || '1k',
-          negative_prompt: activeBackends.edit.integration === 'comfyui' ? (negativePrompt.trim() || undefined) : undefined,
         }),
         signal: controller.signal,
       });
@@ -874,6 +871,14 @@ export default function GrokStudio() {
 
           <div className="flex items-center gap-1 md:gap-2 text-sm text-zinc-400 shrink-0">
             <Link
+              href="/guide"
+              className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 md:h-8"
+              title="手册"
+            >
+              <BookOpen className="h-4 w-4" />
+              <span className="hidden sm:inline">手册</span>
+            </Link>
+            <Link
               href="/gallery"
               className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 md:h-8"
               title="画廊"
@@ -1006,19 +1011,6 @@ export default function GrokStudio() {
               </button>
             ))}
           </div>
-
-          {(activeBackends.generate.integration === 'comfyui' || activeBackends.edit.integration === 'comfyui') && (
-            <div className="mb-2 flex items-center gap-2">
-              <span className="shrink-0 text-xs text-zinc-500">负向</span>
-              <input
-                className="w-full rounded-md border border-zinc-800 bg-transparent px-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600"
-                placeholder="可空。CFG 为 1 时这行几乎不起作用，约束写在正向里"
-                value={negativePrompt}
-                onChange={(e) => setNegativePrompt(e.target.value)}
-                disabled={isStreaming || imageBusy || !currentConvId}
-              />
-            </div>
-          )}
 
           <Textarea
             className="chat-input min-h-[44px] max-h-[120px] text-base px-3 py-2 md:min-h-[48px] resize-y"
@@ -1451,7 +1443,6 @@ export default function GrokStudio() {
                         ['像素', previewImage.width && previewImage.height ? `${previewImage.width} × ${previewImage.height}` : '—'],
                         ['请求尺寸', previewImage.extra_json?.size || '—'],
                         ['种子', previewImage.extra_json?.seed ?? '—'],
-                        ['负向', previewImage.negative_prompt || '—'],
                         ['步数', previewImage.extra_json?.steps ?? '—'],
                         ['张数', previewImage.extra_json?.n ?? previewImage.n_index ?? '—'],
                         ['生成时间', previewImage.created_at ? new Date(previewImage.created_at).toLocaleString() : '—'],

@@ -33,12 +33,18 @@ function optionalInt(value: unknown): number | undefined {
   return Math.round(n);
 }
 
-function optionalDenoise(value: unknown): number | undefined {
-  if (value == null || String(value).trim() === '') return undefined;
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0 || n > 1) {
-    throw new ComfyError('重绘强度要写在 0 和 1 之间，例如 0.85', 400);
+const RECOMMENDED_DENOISE = 0.85;
+
+/** Empty uses the recommended redraw. 0 keeps the reference-encoder edit. */
+function editDenoise(value: unknown): number | null {
+  const raw = value == null ? '' : String(value).trim();
+  if (raw === '' ) return RECOMMENDED_DENOISE;
+  if (raw === '0' || raw === '参考') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1) {
+    throw new ComfyError('重绘强度要写在 0 和 1 之间。空着就是 0.85，填 0 只用参考图节点', 400);
   }
+  if (n === 0) return null;
   return Math.round(n * 100) / 100;
 }
 
@@ -178,7 +184,7 @@ function pendingRows(opts: {
   baseUrl: string;
   width: number;
   height: number;
-  denoise?: number;
+  denoise?: number | null;
 }): ImageAsset[] {
   const images: ImageAsset[] = [];
   for (let i = 0; i < opts.count; i++) {
@@ -299,9 +305,9 @@ export async function submitComfyEdit(opts: {
   const resolution = opts.resolution || '1k';
   const side = resolutionSide(resolution);
   const extra = vendorExtra('image.edit');
-  let denoise: number | undefined;
+  let denoise: number | null;
   try {
-    denoise = optionalDenoise(extra.denoise);
+    denoise = editDenoise(extra.denoise);
   } catch (e) {
     throw asComfyError(e);
   }

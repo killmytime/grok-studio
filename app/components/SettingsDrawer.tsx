@@ -336,10 +336,12 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                     <Field label="URL">
                       <Input className="settings-input mt-1" placeholder={kind.id === 'comfyui' ? 'http://127.0.0.1:8188' : undefined} value={v.base_url} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, base_url: e.target.value } : x))} />
                     </Field>
-                    <Field label="API Key">
-                      <Input className="settings-input mt-1" type="password" value={v.api_key} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, api_key: e.target.value } : x))} />
-                    </Field>
-                    {(kind.extraFields || []).filter((f) => f.kind !== 'url' && f.kind !== 'password').map((field) => (
+                    {kind.requiresApiKey && (
+                      <Field label="API Key">
+                        <Input className="settings-input mt-1" type="password" value={v.api_key} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, api_key: e.target.value } : x))} />
+                      </Field>
+                    )}
+                    {(kind.extraFields || []).filter((f) => !f.advanced && f.kind !== 'url' && f.kind !== 'password').map((field) => (
                       <Field key={field.key} label={field.label} hint={field.hint}>
                         <Input
                           className="settings-input mt-1"
@@ -350,6 +352,28 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                       </Field>
                     ))}
                   </div>
+                  {((kind.extraFields || []).some((f) => f.advanced) || !kind.requiresApiKey) && (
+                    <details className="text-xs text-zinc-500">
+                      <summary className="cursor-pointer select-none">高级配置</summary>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {!kind.requiresApiKey && (
+                          <Field label="API Key" hint="多数本地服务不用填">
+                            <Input className="settings-input mt-1" type="password" value={v.api_key} onChange={(e) => setVendors((prev) => prev.map((x) => x.id === v.id ? { ...x, api_key: e.target.value } : x))} />
+                          </Field>
+                        )}
+                        {(kind.extraFields || []).filter((f) => f.advanced).map((field) => (
+                          <Field key={field.key} label={field.label} hint={field.hint}>
+                            <Input
+                              className="settings-input mt-1"
+                              placeholder={field.placeholder}
+                              value={String(v.extra?.[field.key] ?? '')}
+                              onChange={(e) => patchVendor(v.id, { extra: { ...(v.extra || {}), [field.key]: e.target.value } })}
+                            />
+                          </Field>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                   <div className="flex flex-wrap gap-2 items-center">
                     <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fetchModels(v)} disabled={!!fetching[v.id] || !v.base_url}>
                       {fetching[v.id] ? '拉取中…' : (kind.id === 'qwen3tts' ? '从 /v1/audio/voices 拉取' : kind.id === 'comfyui' ? '从 /models/unet 拉取' : '从 /v1/models 拉取')}
@@ -371,7 +395,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                   {fetchErr[v.id] ? <div className="text-[10px] text-red-400">{fetchErr[v.id]}</div> : null}
                   {kind.id === 'comfyui' && (
                     <div className="text-[10px] text-zinc-500">
-                      URL 填 ComfyUI 根地址，例如 http://127.0.0.1:8188，只有写进这里才会连接。生图和改图都绑到 qwen-image-2.1。正向用完整句子：单人、全身或半身、两只手各自在做什么。全身用 9:16。步数空着就是 20。这套图 CFG 为 1，负向几乎不起作用，约束写在正向里。改图默认走参考图节点，适合改颜色和背景。重绘填 0.85 会按原图重画，用来换衣服或加上原来没有的东西。
+                      URL 填 ComfyUI 根地址，例如 http://127.0.0.1:8188。生图和改图都绑到 qwen-image-2.1。正向写完整句子，全身用 9:16。不填高级配置也行：20 步、随机种子、改图重绘 0.85。写法见手册。
                     </div>
                   )}
                   {kind.id === 'qwen3tts' && ttsMeta[v.id]?.mode === 'clone' && (
