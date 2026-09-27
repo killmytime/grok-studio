@@ -17,6 +17,7 @@ export async function grokEdit(opts: {
   resolution?: string;
   conversation_id: string;
   negative_prompt?: string;
+  denoise?: number | null;
   backend?: CapabilityBackend;
 }): Promise<{ images: ImageAsset[]; mode?: string }> {
   const backend = opts.backend || resolveImageEditBackend();
@@ -157,6 +158,7 @@ async function comfyEdit(opts: {
   resolution?: string;
   conversation_id: string;
   negative_prompt?: string;
+  denoise?: number | null;
   backend?: CapabilityBackend;
 }): Promise<{ images: ImageAsset[]; mode?: string }> {
   const backend = opts.backend || resolveImageEditBackend();
@@ -189,6 +191,7 @@ export async function editImages(opts: {
   resolution?: string;
   conversation_id: string;
   negative_prompt?: string;
+  denoise?: number | null;
 }): Promise<{ images: ImageAsset[]; mode?: string }> {
   const backend = resolveImageEditBackend();
   if (!hasCapability(backend.provider, 'image.edit')) {

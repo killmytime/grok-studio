@@ -18,7 +18,7 @@ import {
   submitPrompt,
   uploadImage,
 } from './client';
-import { prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow, type PreparedWorkflow } from './workflow';
+import { prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow, resolveDenoise, type PreparedWorkflow } from './workflow';
 
 const inflight = new Map<string, AbortController>();
 const finalizing = new Map<string, Promise<void>>();
@@ -31,21 +31,6 @@ function optionalInt(value: unknown): number | undefined {
   const n = Number(value);
   if (!Number.isFinite(n)) return undefined;
   return Math.round(n);
-}
-
-const RECOMMENDED_DENOISE = 0.85;
-
-/** Empty uses the recommended redraw. 0 keeps the reference-encoder edit. */
-function editDenoise(value: unknown): number | null {
-  const raw = value == null ? '' : String(value).trim();
-  if (raw === '' ) return RECOMMENDED_DENOISE;
-  if (raw === '0' || raw === '参考') return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0 || n > 1) {
-    throw new ComfyError('重绘强度要写在 0 和 1 之间。空着就是 0.85，填 0 只用参考图节点', 400);
-  }
-  if (n === 0) return null;
-  return Math.round(n * 100) / 100;
 }
 
 function vendorExtra(capability: 'image.generate' | 'image.edit'): Record<string, unknown> {
@@ -227,7 +212,7 @@ function pendingRows(opts: {
 function asComfyError(e: unknown): ComfyError {
   if (e instanceof ComfyError) return e;
   const message = e instanceof Error ? e.message : 'ComfyUI 失败';
-  const status = /必填|工作流/.test(message) ? 400 : 502;
+  const status = /必填|工作流|强度/.test(message) ? 400 : 502;
   return new ComfyError(message, status);
 }
 
@@ -295,6 +280,7 @@ export async function submitComfyEdit(opts: {
   resolution?: string;
   conversation_id: string;
   negative_prompt?: string;
+  denoise?: number | null;
   backend: CapabilityBackend;
   source: ImageAsset;
 }): Promise<{ images: ImageAsset[] }> {
@@ -307,7 +293,7 @@ export async function submitComfyEdit(opts: {
   const extra = vendorExtra('image.edit');
   let denoise: number | null;
   try {
-    denoise = editDenoise(extra.denoise);
+    denoise = resolveDenoise(opts.denoise !== undefined ? opts.denoise : extra.denoise);
   } catch (e) {
     throw asComfyError(e);
   }

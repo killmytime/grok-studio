@@ -64,7 +64,7 @@ docker compose up -d --build
 
 生图用 `app/lib/providers/comfy/workflows/qwen-image.json`（已在本机跑通的 API 格式）。采样器 `res_multistep`，CFG 1，默认 20 步。CFG 为 1 时负向条件几乎不参与，界面上没有负向框，解剖和构图约束写在正向句子里。用户手册是 `docs/user-guide.md`，应用里的「手册」页直接渲染这份文件。
 
-改图默认走重绘：生图那张图加上 `LoadImage` → `VAEEncode`，采样器 `denoise` 为 0.85。原图的姿势还在，新的布料和物体才能画上去。供应商 extra 里 `denoise` 为空就用这个推荐值；写成 `0` 才改走 `qwen-image-edit.json`。参考图接在 `TextEncodeQwenImage21` 的 `images.image_1` 上（这版 ComfyUI 的自动增长输入要带 `images.` 前缀，写成 `image_1` 会在执行时报意外参数）。参考图节点适合改颜色和背景，加不上原图里没有的衣服或物体。
+改图请求可以带 `denoise`。界面在改图按钮旁放强度条，默认 0.85，这一次的值覆盖供应商设置。0 走 `qwen-image-edit.json` 的参考图节点，参考图接在 `TextEncodeQwenImage21` 的 `images.image_1` 上（自动增长输入要带 `images.` 前缀）。大于 0 则用生图那张图加 `LoadImage` → `VAEEncode`，采样器 `denoise` 用这个数。空请求才回落到供应商 extra，extra 也空则仍是 0.85。参考图节点适合改颜色和背景；0.85 左右才能换衣服、换场景；再高就接近换姿态、换人。
 
 地址只来自供应商 URL。提交 `/prompt` 后立刻返回 pending，后台轮询 `/history`，再从 `/view` 把图存进 `data/images/`。
 

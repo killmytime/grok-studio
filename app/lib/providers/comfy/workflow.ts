@@ -56,6 +56,27 @@ export function randomSeed(): number {
   return Math.floor(Math.random() * 0x7fffffff);
 }
 
+/** Empty means the recommended redraw. 0 uses the reference-image edit. */
+export function resolveDenoise(value: unknown): number | null {
+  const raw = value == null ? '' : String(value).trim();
+  if (raw === '') return 0.85;
+  if (raw === '0' || raw === '参考') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1) {
+    throw new Error('重绘强度要写在 0 和 1 之间。空着就是 0.85，填 0 只用参考图节点');
+  }
+  if (n === 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+export function comfyStrengthHint(value: number): string {
+  if (value <= 0) return '参考图 · 改颜色、改背景';
+  if (value < 0.55) return '小改 · 人尽量不动';
+  if (value < 0.75) return '局部 · 领口、光线';
+  if (value < 0.92) return '换衣服、换场景';
+  return '换姿态、换人';
+}
+
 function applyCommon(graph: ComfyGraph, opts: {
   positive: string;
   negative?: string | null;

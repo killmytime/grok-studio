@@ -24,6 +24,7 @@ import { useToast } from '@/components/ui/toast';
 import { describeFromSettings } from '@/app/lib/integrations/catalog';
 import { ASPECT_RATIOS, RESOLUTIONS, normalizeResolution } from '@/app/lib/image-presets';
 import type { AppSettings, Conversation, GalleryImage } from '@/app/lib/types';
+import { ComfyStrength } from '@/app/components/ComfyStrength';
 import ViewerImage from './ViewerImage';
 import { useViewerRotation } from './useViewerRotation';
 
@@ -84,6 +85,7 @@ export default function GalleryView() {
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [previewEntered, setPreviewEntered] = useState(false);
   const [editPrompt, setEditPrompt] = useState('');
+  const [editStrength, setEditStrength] = useState(0.85);
   const [genPrompt, setGenPrompt] = useState('');
   const [aspect, setAspect] = useState('1:1');
   const [resolution, setResolution] = useState('1k');
@@ -314,6 +316,7 @@ export default function GalleryView() {
           conversation_id: preview.conversation_id,
           aspect_ratio: aspect,
           resolution,
+          denoise: active?.edit.integration === 'comfyui' ? editStrength : undefined,
         }),
       });
       const data = await res.json();
@@ -788,6 +791,9 @@ export default function GalleryView() {
             <p className="mb-2 max-h-16 overflow-auto text-xs leading-relaxed text-zinc-400">
               {preview.prompt || '（无提示词）'}
             </p>
+            {active?.edit.integration === 'comfyui' && canEdit && (
+              <ComfyStrength value={editStrength} onChange={setEditStrength} disabled={busy} className="mb-2" />
+            )}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <Textarea
                 className="min-h-[40px] max-h-20 flex-1 resize-y border-white/10 text-sm"

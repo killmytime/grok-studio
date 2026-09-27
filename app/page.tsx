@@ -24,6 +24,7 @@ import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
 import { ASPECT_RATIOS, RESOLUTIONS, normalizeResolution } from './lib/image-presets';
 import ViewerImage from './components/ViewerImage';
+import { ComfyStrength } from './components/ComfyStrength';
 import { useViewerRotation } from './components/useViewerRotation';
 
 const resumingUserTurns = new Set<string>();
@@ -42,6 +43,7 @@ export default function GrokStudio() {
   const [isNSFW, setIsNSFW] = useState(false);
 
   const [input, setInput] = useState('');
+  const [editStrength, setEditStrength] = useState(0.85);
   const [selectedAspect, setSelectedAspect] = useState('1:1');
   const [selectedResolution, setSelectedResolution] = useState('1k');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -494,6 +496,7 @@ export default function GrokStudio() {
           conversation_id: currentConvId,
           aspect_ratio: selectedAspect,
           resolution: selectedResolution || settings.default_resolution || '1k',
+          denoise: activeBackends.edit.integration === 'comfyui' ? editStrength : undefined,
         }),
         signal: controller.signal,
       });
@@ -1014,17 +1017,13 @@ export default function GrokStudio() {
 
           <Textarea
             className="chat-input min-h-[44px] max-h-[120px] text-base px-3 py-2 md:min-h-[48px] resize-y"
-            placeholder={currentImage ? `继续改这张图... (Shift+Enter 换行)` : "输入消息或图片描述 (Shift+Enter 换行)"}
+            placeholder="输入消息或图片描述 (Shift+Enter 换行)"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                if (currentImage) {
-                  if (canEditImages) editImage(currentImage, input.trim());
-                } else {
-                  sendChatMessage();
-                }
+                sendChatMessage();
               }
             }}
             disabled={isStreaming || imageBusy || !currentConvId}
@@ -1039,6 +1038,9 @@ export default function GrokStudio() {
             >
               <ImageIcon className="w-4 h-4 mr-1" /> 生图
             </Button>
+            {currentImage && activeBackends.edit.integration === 'comfyui' && canEditImages && (
+              <ComfyStrength value={editStrength} onChange={setEditStrength} disabled={imageBusy} className="max-w-xs flex-1" />
+            )}
             {currentImage && (
               <Button
                 size="sm"
@@ -1063,8 +1065,8 @@ export default function GrokStudio() {
             ) : (
               <Button 
                 className="h-9 px-4" 
-                onClick={() => currentImage ? editImage(currentImage, input.trim()) : sendChatMessage()}
-                disabled={(!input.trim() && !currentImage) || isStreaming || imageBusy || !currentConvId || (!!currentImage && !canEditImages)}
+                onClick={() => sendChatMessage()}
+                disabled={!input.trim() || isStreaming || imageBusy || !currentConvId}
               >
                 <Send className="w-4 h-4" />
               </Button>
@@ -1072,13 +1074,11 @@ export default function GrokStudio() {
           </div>
           <div className="hidden md:block text-[10px] text-zinc-500 mt-1.5 px-1">
             Enter 发送 · Shift+Enter 换行
-            {currentImage && canEditImages && !activeBackends.generate.supportsEdit
-              ? ` · 改图使用 ${activeBackends.edit.model}（${activeBackends.edit.label}）`
-              : currentImage && canEditImages
-                ? ' · 选中图片后可继续编辑'
-                : currentImage && !canEditImages
-                  ? ` · ${activeBackends.edit.reason || '当前后端不能改图'}`
-                  : ' · 选中图片后可继续编辑'}
+            {currentImage && canEditImages
+              ? ` · 改图用右侧按钮${activeBackends.edit.integration === 'comfyui' ? '，强度只作用于改图' : ''}`
+              : currentImage && !canEditImages
+                ? ` · ${activeBackends.edit.reason || '当前后端不能改图'}`
+                : ''}
           </div>
         </div>
 

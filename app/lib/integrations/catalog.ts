@@ -93,7 +93,7 @@ export const INTEGRATIONS: IntegrationManifest[] = [
     extraFields: [
       { key: 'seed', label: 'Seed', hint: '空=每次随机', placeholder: '可选', advanced: true },
       { key: 'steps', label: 'Steps', hint: '空=默认 20。简单站姿可以填 8', placeholder: '20', advanced: true },
-      { key: 'denoise', label: '重绘', hint: '空着就是 0.85，改图按原图重画。填 0 只用参考图节点，适合改颜色和背景', placeholder: '0.85', advanced: true },
+      { key: 'denoise', label: '重绘', hint: '改图条的默认强度。空着按 0.85。填 0 是参考图', placeholder: '0.85', advanced: true },
     ],
     notes: 'Qwen Image 2.1。正向写完整句子。种子、步数、重绘在高级配置里。',
   },

@@ -4,7 +4,7 @@ import { createServer, type Server } from 'http';
 import { join } from 'path';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { vi } from 'vitest';
-import { DEFAULT_NEGATIVE, prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow } from '../app/lib/providers/comfy/workflow';
+import { DEFAULT_NEGATIVE, prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow, resolveDenoise, comfyStrengthHint } from '../app/lib/providers/comfy/workflow';
 
 const TEST_DATA_DIR = join(process.cwd(), 'tests', '.tmp-comfy');
 process.env.DATA_DIR = TEST_DATA_DIR;
@@ -240,6 +240,17 @@ describe('comfyui qwen image 2.1', () => {
     expect(prepared.graph['70'].inputs.denoise).toBe(0.85);
     expect(prepared.graph['67'].inputs.text).toBe('a red coat');
     expect(prepared.graph['70'].inputs.steps).toBe(20);
+  });
+
+  it('maps an empty redraw strength to the recommended default', () => {
+    expect(resolveDenoise('')).toBe(0.85);
+    expect(resolveDenoise(undefined)).toBe(0.85);
+    expect(resolveDenoise(0)).toBeNull();
+    expect(resolveDenoise('0.5')).toBe(0.5);
+    expect(comfyStrengthHint(0)).toMatch(/参考图/);
+    expect(comfyStrengthHint(0.85)).toMatch(/换衣服/);
+    expect(comfyStrengthHint(1)).toMatch(/换姿态/);
+    expect(() => resolveDenoise(1.2)).toThrow(/强度/);
   });
 
   it('does not bake the production LAN address into the client', () => {
