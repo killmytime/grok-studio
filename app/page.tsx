@@ -1012,7 +1012,7 @@ export default function GrokStudio() {
               <span className="shrink-0 text-xs text-zinc-500">负向</span>
               <input
                 className="w-full rounded-md border border-zinc-800 bg-transparent px-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600"
-                placeholder="可空。空着就用工作流默认：low quality, bad anatomy…"
+                placeholder="可空。CFG 为 1 时这行几乎不起作用，约束写在正向里"
                 value={negativePrompt}
                 onChange={(e) => setNegativePrompt(e.target.value)}
                 disabled={isStreaming || imageBusy || !currentConvId}

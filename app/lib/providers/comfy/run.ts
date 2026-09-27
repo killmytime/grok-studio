@@ -18,7 +18,7 @@ import {
   submitPrompt,
   uploadImage,
 } from './client';
-import { prepareEditWorkflow, prepareGenerateWorkflow, type PreparedWorkflow } from './workflow';
+import { prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow, type PreparedWorkflow } from './workflow';
 
 const inflight = new Map<string, AbortController>();
 const finalizing = new Map<string, Promise<void>>();
@@ -31,6 +31,15 @@ function optionalInt(value: unknown): number | undefined {
   const n = Number(value);
   if (!Number.isFinite(n)) return undefined;
   return Math.round(n);
+}
+
+function optionalDenoise(value: unknown): number | undefined {
+  if (value == null || String(value).trim() === '') return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0 || n > 1) {
+    throw new ComfyError('重绘强度要写在 0 和 1 之间，例如 0.85', 400);
+  }
+  return Math.round(n * 100) / 100;
 }
 
 function vendorExtra(capability: 'image.generate' | 'image.edit'): Record<string, unknown> {
@@ -169,6 +178,7 @@ function pendingRows(opts: {
   baseUrl: string;
   width: number;
   height: number;
+  denoise?: number;
 }): ImageAsset[] {
   const images: ImageAsset[] = [];
   for (let i = 0; i < opts.count; i++) {
@@ -199,6 +209,7 @@ function pendingRows(opts: {
         n: opts.count,
         seed: opts.prepared.seed,
         steps: opts.prepared.steps,
+        ...(opts.denoise != null ? { denoise: opts.denoise } : {}),
         comfy_base_url: opts.baseUrl,
         started_at: Date.now(),
       },
@@ -288,6 +299,12 @@ export async function submitComfyEdit(opts: {
   const resolution = opts.resolution || '1k';
   const side = resolutionSide(resolution);
   const extra = vendorExtra('image.edit');
+  let denoise: number | undefined;
+  try {
+    denoise = optionalDenoise(extra.denoise);
+  } catch (e) {
+    throw asComfyError(e);
+  }
   const apiKey = opts.backend.apiKey || apiKeyForComfy(baseUrl);
   const { ext, mime } = fileExt(opts.source.mime || '', opts.source.file_path);
   const filename = `studio-${opts.source.id.slice(0, 8)}-${Date.now()}.${ext}`;
@@ -300,15 +317,17 @@ export async function submitComfyEdit(opts: {
   }
   let prepared: PreparedWorkflow;
   try {
-    prepared = prepareEditWorkflow({
+    const shared = {
       positive: opts.prompt,
       negative: opts.negative_prompt,
       imageName: uploaded,
-      resolution: side,
       seed: optionalInt(extra.seed),
       steps: optionalInt(extra.steps),
       unetName: unetFromModel(opts.backend.model),
-    });
+    };
+    prepared = denoise == null
+      ? prepareEditWorkflow({ ...shared, resolution: side })
+      : prepareRedrawWorkflow({ ...shared, denoise });
   } catch (e) {
     throw asComfyError(e);
   }
@@ -330,6 +349,7 @@ export async function submitComfyEdit(opts: {
     baseUrl,
     width: opts.source.width || side,
     height: opts.source.height || side,
+    denoise,
   });
   startWatch(promptId, baseUrl, apiKey);
   return { images };

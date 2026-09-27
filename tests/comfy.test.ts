@@ -4,7 +4,7 @@ import { createServer, type Server } from 'http';
 import { join } from 'path';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { vi } from 'vitest';
-import { DEFAULT_NEGATIVE, prepareEditWorkflow, prepareGenerateWorkflow } from '../app/lib/providers/comfy/workflow';
+import { DEFAULT_NEGATIVE, prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow } from '../app/lib/providers/comfy/workflow';
 
 const TEST_DATA_DIR = join(process.cwd(), 'tests', '.tmp-comfy');
 process.env.DATA_DIR = TEST_DATA_DIR;
@@ -187,7 +187,7 @@ describe('comfyui qwen image 2.1', () => {
     expect(prepared.negative).toBe(DEFAULT_NEGATIVE);
     expect(latent.inputs).toMatchObject({ width: 1024, height: 576, batch_size: 2 });
     expect(sampler.inputs.seed).toBe(99);
-    expect(sampler.inputs.steps).toBe(8);
+    expect(sampler.inputs.steps).toBe(20);
     expect(sampler.inputs.cfg).toBe(1);
     expect(prepared.graph['66'].inputs.unet_name).toBe('qwen_image_2.1_int8_convrot.safetensors');
     expect(prepared.graph['69'].inputs).toMatchObject({ shift: 3, sampling: 'flow' });
@@ -218,12 +218,28 @@ describe('comfyui qwen image 2.1', () => {
     expect(prepared.graph['81'].inputs.prompt).toBe('make the coat red');
     expect(prepared.graph['81'].inputs.negative_prompt).toBe(DEFAULT_NEGATIVE);
     expect(prepared.graph['81'].inputs.resolution).toBe(1024);
-    expect(prepared.graph['81'].inputs.image_1).toEqual(['80', 0]);
+    expect(prepared.graph['81'].inputs['images.image_1']).toEqual(['80', 0]);
     expect(prepared.graph['70'].inputs.denoise).toBe(1);
     expect(prepared.graph['70'].inputs.latent_image).toEqual(['81', 2]);
     expect(prepared.graph['70'].inputs.positive).toEqual(['81', 0]);
     expect(prepared.graph['70'].inputs.negative).toEqual(['81', 1]);
     expect(prepared.graph['66'].inputs.unet_name).toBe('qwen_image_2.1_int8_convrot.safetensors');
+  });
+
+  it('redraw keeps the source pixels and opens room for new clothes or objects', () => {
+    const prepared = prepareRedrawWorkflow({
+      positive: 'a red coat',
+      imageName: 'uploaded.png',
+      denoise: 0.85,
+      seed: 3,
+    });
+    expect(prepared.graph['80'].inputs.image).toBe('uploaded.png');
+    expect(prepared.graph['82'].class_type).toBe('VAEEncode');
+    expect(prepared.graph['82'].inputs.vae).toEqual(['63', 0]);
+    expect(prepared.graph['70'].inputs.latent_image).toEqual(['82', 0]);
+    expect(prepared.graph['70'].inputs.denoise).toBe(0.85);
+    expect(prepared.graph['67'].inputs.text).toBe('a red coat');
+    expect(prepared.graph['70'].inputs.steps).toBe(20);
   });
 
   it('does not bake the production LAN address into the client', () => {
@@ -285,6 +301,7 @@ describe('comfyui qwen image 2.1', () => {
     expect(editHit.body.prompt['81'].inputs.prompt).toBe('make the coat red');
     expect(editHit.body.prompt['81'].inputs.negative_prompt).toBe('extra fingers');
     expect(editHit.body.prompt['81'].inputs.resolution).toBe(1024);
+    expect(editHit.body.prompt['81'].inputs['images.image_1']).toEqual(['80', 0]);
     const done = await untilDone(db.getImage, [result.images[0].id]);
     expect(done[0].status).toBe('completed');
     expect(done[0].parent_image_id).toBe(source.id);

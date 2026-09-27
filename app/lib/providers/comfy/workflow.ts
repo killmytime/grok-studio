@@ -76,7 +76,7 @@ function applyCommon(graph: ComfyGraph, opts: {
   if (samplers.length === 0) throw new Error('工作流里没有 KSampler');
 
   let seed = opts.seed ?? randomSeed();
-  let steps = 8;
+  let steps = 20;
   let negative = '';
   for (const id of samplers) {
     const node = graph[id];
@@ -142,4 +142,33 @@ export function prepareEditWorkflow(opts: {
     if (opts.negative && opts.negative.trim()) graph[id].inputs.negative_prompt = opts.negative.trim();
   }
   return { graph, ...common, width: opts.resolution, height: opts.resolution };
+}
+
+/** Redraw from the source pixels. The reference encoder keeps whatever is already in the picture, so new clothes or objects need this path. */
+export function prepareRedrawWorkflow(opts: {
+  positive: string;
+  negative?: string | null;
+  imageName: string;
+  denoise: number;
+  seed?: number;
+  steps?: number;
+  unetName?: string;
+}): PreparedWorkflow {
+  const graph = cloneGraph(GENERATE_TEMPLATE);
+  const vaeIds = idsByClass(graph, 'VAELoader');
+  if (vaeIds.length === 0) throw new Error('生图工作流里没有 VAE');
+  graph['80'] = {
+    class_type: 'LoadImage',
+    inputs: { image: opts.imageName },
+  };
+  graph['82'] = {
+    class_type: 'VAEEncode',
+    inputs: { pixels: ['80', 0], vae: [vaeIds[0], 0] },
+  };
+  const common = applyCommon(graph, opts);
+  for (const id of idsByClass(graph, 'KSampler')) {
+    graph[id].inputs.latent_image = ['82', 0];
+    graph[id].inputs.denoise = opts.denoise;
+  }
+  return { graph, ...common, width: 0, height: 0 };
 }

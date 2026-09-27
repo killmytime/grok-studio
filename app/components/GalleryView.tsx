@@ -696,7 +696,7 @@ export default function GalleryView() {
           {active?.generate.integration === 'comfyui' && (
             <input
               className="mb-2 w-full rounded-md border border-white/10 bg-transparent px-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600"
-              placeholder="负向提示词，可空。空着就用工作流默认"
+              placeholder="负向可空。CFG 为 1 时几乎不起作用"
               value={negativePrompt}
               onChange={(e) => setNegativePrompt(e.target.value)}
               disabled={busy}
@@ -794,7 +794,7 @@ export default function GalleryView() {
             {active?.edit.integration === 'comfyui' && (
               <input
                 className="mb-2 w-full rounded-md border border-white/10 bg-transparent px-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600"
-                placeholder="负向提示词，可空。空着就用工作流默认"
+                placeholder="负向可空。CFG 为 1 时几乎不起作用"
                 value={negativePrompt}
                 onChange={(e) => setNegativePrompt(e.target.value)}
                 disabled={busy || !canEdit}

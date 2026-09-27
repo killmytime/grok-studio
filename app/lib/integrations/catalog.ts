@@ -90,9 +90,10 @@ export const INTEGRATIONS: IntegrationManifest[] = [
     },
     extraFields: [
       { key: 'seed', label: 'Seed', hint: '空=每次随机', placeholder: '可选' },
-      { key: 'steps', label: 'Steps', hint: '空=工作流默认 8', placeholder: '8' },
+      { key: 'steps', label: 'Steps', hint: '空=工作流默认 20。简单站姿 8 步也够', placeholder: '20' },
+      { key: 'denoise', label: '重绘', hint: '空=参考图改图。填 0.85 按原图重画，用来换衣服或加物体', placeholder: '0.85' },
     ],
-    notes: 'Qwen Image 2.1。正向提示词必填；负向留空则用工作流默认。地址填 ComfyUI 根。',
+    notes: 'Qwen Image 2.1。CFG 为 1，负向几乎不起作用，约束写在正向里。',
   },
   {
     id: 'qwen3tts',

@@ -62,7 +62,14 @@ docker compose up -d --build
 
 ## ComfyUI
 
-生图用 `app/lib/providers/comfy/workflows/qwen-image.json`（已在本机跑通的 API 格式）。改图是另一张图 `qwen-image-edit.json`：同一套 CLIP / UNet / VAE，文本走 `TextEncodeQwenImage21`，参考图从 `LoadImage` 进去。正向必填；负向留空就保留工作流里的那句。地址只来自供应商 URL，代码里不写死生产机。提交 `/prompt` 后立刻返回 pending，后台轮询 `/history`，再从 `/view` 把图存进 `data/images/`。
+生图用 `app/lib/providers/comfy/workflows/qwen-image.json`（已在本机跑通的 API 格式）。采样器 `res_multistep`，CFG 1，默认 20 步。CFG 为 1 时负向条件几乎不参与，所以解剖和构图约束要写在正向句子里。
+
+改图有两条路，模型文件相同：
+
+- 默认走 `qwen-image-edit.json`。参考图接在 `TextEncodeQwenImage21` 的 `images.image_1` 上（这版 ComfyUI 的自动增长输入要带 `images.` 前缀，写成 `image_1` 会在执行时报意外参数）。它按原图的构图重生成，适合改颜色和背景，加不上原图里没有的衣服或物体。
+- 供应商 extra 里 `denoise` 为 0 到 1 的数（常用 0.85）时，改用生图那张图：`LoadImage` → `VAEEncode`，采样器 `denoise` 设成这个数。原图的姿势还在，新的布料和物体才能画上去。
+
+地址只来自供应商 URL。提交 `/prompt` 后立刻返回 pending，后台轮询 `/history`，再从 `/view` 把图存进 `data/images/`。
 
 ## 目录
 

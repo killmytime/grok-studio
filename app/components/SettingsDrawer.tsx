@@ -371,7 +371,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                   {fetchErr[v.id] ? <div className="text-[10px] text-red-400">{fetchErr[v.id]}</div> : null}
                   {kind.id === 'comfyui' && (
                     <div className="text-[10px] text-zinc-500">
-                      URL 填 ComfyUI 根地址，例如 http://127.0.0.1:8188。生产环境 http://192.168.1.29:8188 只有写进这里才会连接。正向提示词必填，负向留空就用工作流默认。添加后把「生图」和「改图」都绑到 qwen-image-2.1。改图会把原图交给 Qwen Image 2.1 的参考图节点，比例跟着原图。
+                      URL 填 ComfyUI 根地址，例如 http://127.0.0.1:8188，只有写进这里才会连接。生图和改图都绑到 qwen-image-2.1。正向用完整句子：单人、全身或半身、两只手各自在做什么。全身用 9:16。步数空着就是 20。这套图 CFG 为 1，负向几乎不起作用，约束写在正向里。改图默认走参考图节点，适合改颜色和背景。重绘填 0.85 会按原图重画，用来换衣服或加上原来没有的东西。
                     </div>
                   )}
                   {kind.id === 'qwen3tts' && ttsMeta[v.id]?.mode === 'clone' && (

@@ -51,7 +51,7 @@
   "70": {
     "inputs": {
       "seed": 42,
-      "steps": 8,
+      "steps": 20,
       "cfg": 1,
       "sampler_name": "res_multistep",
       "scheduler": "simple",
@@ -78,7 +78,7 @@
       "negative_prompt": "low quality, bad anatomy, extra digits, missing digits, extra limbs, missing limbs",
       "vae": ["63", 0],
       "resolution": 1024,
-      "image_1": ["80", 0]
+      "images.image_1": ["80", 0]
     },
     "class_type": "TextEncodeQwenImage21",
     "_meta": { "title": "Qwen Image 2.1 文本编码" }
