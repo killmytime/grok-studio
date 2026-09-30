@@ -1,3 +1,4 @@
+import { afterEach, describe, expect, it } from 'vitest';
 import { readUncensored, writeUncensored, UNCENSORED_KEY } from '../app/lib/uncensor';
 
 describe('uncensor session', () => {
