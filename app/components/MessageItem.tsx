@@ -2,6 +2,7 @@
 
 import { Message } from '@/app/lib/types';
 import React, { useRef, useState } from 'react';
+import CensoredImage from './CensoredImage';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -193,7 +194,7 @@ export default function MessageItem({ message, onRetry, onDelete, onEdit, canSpe
                 {message.extra_json.images.map((img: { id: string; file_path?: string; thumb_path?: string; prompt?: string }) => (
                   <figure key={img.id} className="max-w-xs">
                     {(img.thumb_path || img.file_path) && (
-                      <img
+                      <CensoredImage
                         src={`/api/files/${img.thumb_path || img.file_path}`}
                         alt={img.prompt || ''}
                         className="max-h-64 w-full rounded-md bg-black object-contain"

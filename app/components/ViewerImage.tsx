@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import CensoredImage from './CensoredImage';
 
 interface Props {
   thumbSrc?: string | null;
@@ -55,16 +56,18 @@ export default function ViewerImage({
         }}
       >
         {showThumb && (
-          <img
+          <CensoredImage
             src={thumbSrc!}
             alt=""
+            fill
             draggable={false}
             className={`absolute inset-0 h-full w-full object-contain ${imgClassName}`}
           />
         )}
-        <img
+        <CensoredImage
           src={fullSrc}
           alt={alt}
+          fill
           draggable={false}
           onClick={onClick}
           onLoad={() => setFullReady(true)}

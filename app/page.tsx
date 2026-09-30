@@ -24,6 +24,7 @@ import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
 import { ASPECT_RATIOS, RESOLUTIONS, normalizeResolution } from './lib/image-presets';
 import ViewerImage from './components/ViewerImage';
+import { downloadImage, UncensorButton, useUncensored } from './components/CensoredImage';
 import { ComfyStrength } from './components/ComfyStrength';
 import { useViewerRotation } from './components/useViewerRotation';
 
@@ -41,6 +42,7 @@ export default function GrokStudio() {
   const [showImageDetails, setShowImageDetails] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [isNSFW, setIsNSFW] = useState(false);
+  const revealed = useUncensored();
 
   const [input, setInput] = useState('');
   const [editStrength, setEditStrength] = useState(0.85);
@@ -873,6 +875,7 @@ export default function GrokStudio() {
           </div>
 
           <div className="flex items-center gap-1 md:gap-2 text-sm text-zinc-400 shrink-0">
+            <UncensorButton className="inline-flex h-9 items-center rounded-lg px-2 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 md:h-8" />
             <Link
               href="/guide"
               className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 md:h-8"
@@ -1223,13 +1226,11 @@ export default function GrokStudio() {
                     size="sm"
                     className="h-8 gap-1.5 px-2 text-zinc-300"
                     onClick={() => {
-                      const fullUrl = `/api/files/${previewImage.file_path}`;
-                      const a = document.createElement("a");
-                      a.href = fullUrl;
-                      a.download = `${previewImage.prompt.slice(0, 30) || "image"}.png`;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
+                      void downloadImage(
+                        `/api/files/${previewImage.file_path}`,
+                        `${previewImage.prompt.slice(0, 30) || "image"}.png`,
+                        revealed,
+                      );
                     }}
                   >
                     <Download className="h-4 w-4" />

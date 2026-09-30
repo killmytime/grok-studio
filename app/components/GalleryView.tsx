@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import CensoredImage, { downloadImage, UncensorButton, useUncensored } from './CensoredImage';
 import {
   ArrowLeft,
   Check,
@@ -444,13 +445,14 @@ export default function GalleryView() {
     return () => window.removeEventListener('keydown', onKey);
   }, [previewId, images]);
 
+  const revealed = useUncensored();
+
   function download(img: GalleryImage) {
-    const a = document.createElement('a');
-    a.href = `/api/files/${img.file_path}`;
-    a.download = `${(img.prompt || 'image').slice(0, 30)}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    void downloadImage(
+      `/api/files/${img.file_path}`,
+      `${(img.prompt || 'image').slice(0, 30)}.png`,
+      revealed,
+    );
   }
 
   return (
@@ -479,6 +481,7 @@ export default function GalleryView() {
               <BookOpen className="h-4 w-4" />
               <span className="hidden sm:inline">手册</span>
             </Link>
+            <UncensorButton className="inline-flex h-8 items-center rounded-lg px-2 text-xs text-zinc-400 hover:bg-white/5 hover:text-zinc-100" />
             <Button
               variant={selectMode ? 'secondary' : 'ghost'}
               size="sm"
@@ -599,12 +602,12 @@ export default function GalleryView() {
                             <div className="mt-1 line-clamp-3 text-[10px] text-zinc-400">{img.prompt}</div>
                           </div>
                         ) : (
-                          <img
+                          <CensoredImage
                             src={`/api/files/${img.thumb_path || img.file_path}`}
                             alt={img.prompt || ''}
-                            className="block w-full bg-zinc-900 object-cover"
+                            fit="cover"
                             loading="lazy"
-                            decoding="async"
+                            className="block w-full bg-zinc-900 object-cover"
                           />
                         )}
                         {!pending && !errored && (

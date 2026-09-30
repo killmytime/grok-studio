@@ -3,6 +3,7 @@
 import { ImageAsset } from '@/app/lib/types';
 import { Download, Edit2, RefreshCw, Copy, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import CensoredImage, { downloadImage, useUncensored } from './CensoredImage';
 
 interface Props {
   image: ImageAsset;
@@ -17,6 +18,7 @@ interface Props {
 export default function ImageCard({ image, onEdit, onSetCurrent, onRegen, onPreview, onRetry, compact }: Props) {
   const thumbUrl = `/api/files/${image.thumb_path}`;
   const fullUrl = `/api/files/${image.file_path}`;
+  const revealed = useUncensored();
   const isError = image.status === 'error';
   const isPending = image.status === 'pending';
 
@@ -62,10 +64,8 @@ export default function ImageCard({ image, onEdit, onSetCurrent, onRegen, onPrev
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const a = document.createElement('a');
-    a.href = fullUrl;
-    a.download = `${image.prompt.slice(0, 30)}.${image.mime.split('/')[1] || 'png'}`;
-    a.click();
+    const ext = revealed ? (image.mime.split('/')[1] || 'png') : 'png';
+    void downloadImage(fullUrl, `${image.prompt.slice(0, 30)}.${ext}`, revealed);
   };
 
   const handlePreview = (e: React.MouseEvent) => {
@@ -77,10 +77,10 @@ export default function ImageCard({ image, onEdit, onSetCurrent, onRegen, onPrev
     <div className="image-card mb-3 cursor-pointer" onClick={() => onSetCurrent?.(image)}>
       <div className="relative group">
         <div className="w-full max-h-[180px] bg-zinc-900 flex items-center justify-center overflow-hidden">
-          <img 
-            src={thumbUrl} 
-            alt={image.prompt} 
-            className="max-w-full max-h-[180px] object-contain" 
+          <CensoredImage
+            src={thumbUrl}
+            alt={image.prompt}
+            className="max-h-[180px] w-full object-contain"
           />
         </div>
         <div className="absolute top-2 right-2 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
