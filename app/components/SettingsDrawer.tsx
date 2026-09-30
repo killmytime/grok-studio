@@ -139,6 +139,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
           kind: v.kind,
           base_url: v.base_url,
           api_key: v.api_key,
+          cookie: String(v.extra?.cookie || ''),
         }),
       });
       const data = await res.json();
@@ -365,6 +366,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                           <Field key={field.key} label={field.label} hint={field.hint}>
                             <Input
                               className="settings-input mt-1"
+                              type={field.kind === 'password' ? 'password' : undefined}
                               placeholder={field.placeholder}
                               value={String(v.extra?.[field.key] ?? '')}
                               onChange={(e) => patchVendor(v.id, { extra: { ...(v.extra || {}), [field.key]: e.target.value } })}
@@ -376,7 +378,7 @@ export default function SettingsDrawer({ settings, onSave, onTest }: Props) {
                   )}
                   <div className="flex flex-wrap gap-2 items-center">
                     <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fetchModels(v)} disabled={!!fetching[v.id] || !v.base_url}>
-                      {fetching[v.id] ? '拉取中…' : (kind.id === 'qwen3tts' ? '从 /v1/audio/voices 拉取' : kind.id === 'comfyui' ? '从 /models/unet 拉取' : '从 /v1/models 拉取')}
+                      {fetching[v.id] ? '拉取中…' : (kind.id === 'qwen3tts' ? '从 /v1/audio/voices 拉取' : kind.id === 'comfyui' ? '从 /models/diffusion_models 拉取' : '从 /v1/models 拉取')}
                     </Button>
                     <select
                       className="settings-input h-7 rounded-md bg-transparent border px-2 text-xs min-w-[160px]"

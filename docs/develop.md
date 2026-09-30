@@ -64,9 +64,11 @@ docker compose up -d --build
 
 生图用 `app/lib/providers/comfy/workflows/qwen-image.json`（已在本机跑通的 API 格式）。采样器 `res_multistep`，CFG 1，默认 20 步。CFG 为 1 时负向条件几乎不参与，界面上没有负向框，解剖和构图约束写在正向句子里。用户手册是 `docs/user-guide.md`，应用里的「手册」页直接渲染这份文件。
 
-改图请求可以带 `denoise`。界面在改图按钮旁放强度条，默认 0.85，这一次的值覆盖供应商设置。0 走 `qwen-image-edit.json` 的参考图节点，参考图接在 `TextEncodeQwenImage21` 的 `images.image_1` 上（自动增长输入要带 `images.` 前缀）。大于 0 则用生图那张图加 `LoadImage` → `VAEEncode`，采样器 `denoise` 用这个数。空请求才回落到供应商 extra，extra 也空则仍是 0.85。参考图节点适合改颜色和背景；0.85 左右才能换衣服、换场景；再高就接近换姿态、换人。
+改图请求可以带 `denoise`。界面在改图按钮旁放强度条，默认 0.85，这一次的值覆盖供应商设置。0 走 `qwen-image-edit.json`：CLIP 类型 `qwen_image`，参考图接在 `TextEncodeQwenImage21` 的 `images.image_1` 上（自动增长输入要带 `images.` 前缀），UNet 后接 `QwenImage21Cache`，采样器 `euler`、`simple`、CFG 1、25 步，降噪固定 1。这个节点吐出的 latent 是按参考图尺寸造的空 latent，原图在条件的 `reference_latents` 里，把降噪拉低不会更像原图。大于 0 则用生图那张图加 `LoadImage` → `VAEEncode`，采样器 `denoise` 用这个数。空请求才回落到供应商 extra，extra 也空则仍是 0.85。参考图节点适合改颜色和背景；0.85 左右才能换衣服、换场景；再高就接近换姿态、换人。
 
-地址只来自供应商 URL。提交 `/prompt` 后立刻返回 pending，后台轮询 `/history`，再从 `/view` 把图存进 `data/images/`。
+Anima 用 `workflows/anima.json`。绑定的模型名里带 `anima`（例如 `anima` 或 `Anima-2.9B-preview-v1.safetensors`）才走这张图。CLIP 类型是 `stable_diffusion`，权重默认 `qwen_3_06b_base.safetensors`，VAE 默认 `qwen_image_vae.safetensors`，UNet 默认 `Anima-2.9B-preview-v1.safetensors`。采样器 `euler`，调度器 `sgm_uniform`，CFG 4，默认 32 步。作者推荐的范围是 28–50 步、CFG 3.5–5，个人常用就是 euler 加 sgm_uniform；要更高质量可以把步数改成 50。没有 `TextEncodeQwenImage21`，改图一律是 `LoadImage` → `VAEEncode`，强度必须大于 0。拉下来的文件名如果不是默认那个，把文件名本身绑成模型，图里的 `unet_name` 会换成它。ComfyUI 0.37 的权重在 `/models/diffusion_models`，旧版才在 `/models/unet`，拉取时先试前者。
+
+地址只来自供应商 URL。高级配置里的 Cookie 空着就不带；填了 `Name=value` 才会放进请求的 Cookie 头。提交 `/prompt` 后立刻返回 pending，后台轮询 `/history`，再从 `/view` 把图存进 `data/images/`。
 
 ## 目录
 

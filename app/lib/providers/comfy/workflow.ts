@@ -1,5 +1,6 @@
 import generateTemplate from './workflows/qwen-image.json';
 import editTemplate from './workflows/qwen-image-edit.json';
+import animaTemplate from './workflows/anima.json';
 
 export type ComfyNode = {
   class_type: string;
@@ -11,8 +12,20 @@ export type ComfyGraph = Record<string, ComfyNode>;
 
 export const DEFAULT_NEGATIVE = 'low quality, bad anatomy, extra digits, missing digits, extra limbs, missing limbs';
 
-const GENERATE_TEMPLATE = generateTemplate as unknown as ComfyGraph;
+const QWEN_TEMPLATE = generateTemplate as unknown as ComfyGraph;
 const EDIT_TEMPLATE = editTemplate as unknown as ComfyGraph;
+const ANIMA_TEMPLATE = animaTemplate as unknown as ComfyGraph;
+
+export type ComfyFamily = 'qwen' | 'anima';
+
+/** Anima weights and the friendly model id share this name. Qwen Image 2.1 does not. */
+export function comfyFamily(model?: string | null): ComfyFamily {
+  return /anima/i.test(model || '') ? 'anima' : 'qwen';
+}
+
+function generateTemplateFor(model?: string | null): ComfyGraph {
+  return comfyFamily(model) === 'anima' ? ANIMA_TEMPLATE : QWEN_TEMPLATE;
+}
 
 export interface PreparedWorkflow {
   graph: ComfyGraph;
@@ -118,6 +131,19 @@ function applyCommon(graph: ComfyGraph, opts: {
   return { seed, steps, negative: negative || DEFAULT_NEGATIVE };
 }
 
+function applyLatentSize(graph: ComfyGraph, width: number, height: number, batch: number) {
+  const latents = [
+    ...idsByClass(graph, 'EmptySD3LatentImage'),
+    ...idsByClass(graph, 'EmptyLatentImage'),
+  ];
+  if (latents.length === 0) throw new Error('生图工作流里没有空 Latent');
+  for (const id of latents) {
+    graph[id].inputs.width = width;
+    graph[id].inputs.height = height;
+    graph[id].inputs.batch_size = batch;
+  }
+}
+
 export function prepareGenerateWorkflow(opts: {
   positive: string;
   negative?: string | null;
@@ -127,16 +153,11 @@ export function prepareGenerateWorkflow(opts: {
   seed?: number;
   steps?: number;
   unetName?: string;
+  model?: string | null;
 }): PreparedWorkflow {
-  const graph = cloneGraph(GENERATE_TEMPLATE);
+  const graph = cloneGraph(generateTemplateFor(opts.model));
   const common = applyCommon(graph, opts);
-  const latents = idsByClass(graph, 'EmptySD3LatentImage');
-  if (latents.length === 0) throw new Error('生图工作流里没有空 Latent');
-  for (const id of latents) {
-    graph[id].inputs.width = opts.width;
-    graph[id].inputs.height = opts.height;
-    graph[id].inputs.batch_size = opts.batch;
-  }
+  applyLatentSize(graph, opts.width, opts.height, opts.batch);
   return { graph, ...common, width: opts.width, height: opts.height };
 }
 
@@ -174,8 +195,9 @@ export function prepareRedrawWorkflow(opts: {
   seed?: number;
   steps?: number;
   unetName?: string;
+  model?: string | null;
 }): PreparedWorkflow {
-  const graph = cloneGraph(GENERATE_TEMPLATE);
+  const graph = cloneGraph(generateTemplateFor(opts.model));
   const vaeIds = idsByClass(graph, 'VAELoader');
   if (vaeIds.length === 0) throw new Error('生图工作流里没有 VAE');
   graph['80'] = {

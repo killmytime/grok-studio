@@ -176,30 +176,44 @@ export function defaultModelsForKind(kind: string): Array<{ model: string; capab
     list.push(cap as Capability);
     byModel.set(model, list);
   }
-  if (byModel.size === 0) return [];
-  return [...byModel.entries()].map(([model, capabilities]) => ({ model, capabilities }));
+  const models = [...byModel.entries()].map(([model, capabilities]) => ({ model, capabilities }));
+  for (const extra of integration.extraModels || []) {
+    if (!extra.model || models.some((row) => row.model === extra.model)) continue;
+    models.push({ model: extra.model, capabilities: [...extra.capabilities] });
+  }
+  return models;
+}
+
+function ensureComfyDefaultModels(vendor: Vendor): Vendor {
+  let current = vendor;
+  for (const model of defaultModelsForKind('comfyui')) {
+    if (current.models.some((row) => row.model === model.model)) continue;
+    current = addOrReplaceVendorModel(current.id, model);
+  }
+  return current;
 }
 
 /**
  * First boot with COMFY_BASE_URL creates the ComfyUI vendor and points 生图/改图 at qwen-image-2.1.
- * Later restarts leave an existing ComfyUI row and its bindings alone.
+ * Later restarts leave the URL and bindings alone, and put back a missing qwen-image-2.1 or anima row.
  */
 export function ensureComfyVendor(): Vendor | undefined {
   const base = (process.env.COMFY_BASE_URL || '').trim();
-  if (!base) return undefined;
-  const existing = listVendors().find((v) => getIntegration(v.kind).id === 'comfyui');
-  if (existing) return existing;
-  const vendor = upsertVendor({
-    id: 'comfyui',
-    kind: 'comfyui',
-    label: 'ComfyUI',
-    base_url: base,
-    api_key: '',
-    models: defaultModelsForKind('comfyui'),
-  });
-  setBinding('image.generate', vendor.id, 'qwen-image-2.1');
-  setBinding('image.edit', vendor.id, 'qwen-image-2.1');
-  return vendor;
+  let existing = listVendors().find((v) => getIntegration(v.kind).id === 'comfyui');
+  if (!existing && !base) return undefined;
+  if (!existing) {
+    existing = upsertVendor({
+      id: 'comfyui',
+      kind: 'comfyui',
+      label: 'ComfyUI',
+      base_url: base,
+      api_key: '',
+      models: defaultModelsForKind('comfyui'),
+    });
+    setBinding('image.generate', existing.id, 'qwen-image-2.1');
+    setBinding('image.edit', existing.id, 'qwen-image-2.1');
+  }
+  return ensureComfyDefaultModels(existing);
 }
 
 /** Ensure a Grok vendor row exists so the UI has the baseline. Does not create bindings (legacy settings stay in charge until the UI assigns). */

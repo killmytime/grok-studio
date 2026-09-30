@@ -18,7 +18,7 @@ import {
   submitPrompt,
   uploadImage,
 } from './client';
-import { prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow, resolveDenoise, type PreparedWorkflow } from './workflow';
+import { comfyFamily, prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow, resolveDenoise, type PreparedWorkflow } from './workflow';
 
 const inflight = new Map<string, AbortController>();
 const finalizing = new Map<string, Promise<void>>();
@@ -41,10 +41,17 @@ function vendorExtra(capability: 'image.generate' | 'image.edit'): Record<string
   return vendor.extra || {};
 }
 
-export function apiKeyForComfy(baseUrl: string): string {
+function comfyVendor(baseUrl: string) {
   const root = comfyRoot(baseUrl);
-  const vendor = listVendors().find((v) => canonicalIntegrationId(v.kind) === 'comfyui' && comfyRoot(v.base_url) === root);
-  return vendor?.api_key || '';
+  return listVendors().find((v) => canonicalIntegrationId(v.kind) === 'comfyui' && comfyRoot(v.base_url) === root);
+}
+
+export function apiKeyForComfy(baseUrl: string): string {
+  return comfyVendor(baseUrl)?.api_key || '';
+}
+
+export function cookieForComfy(baseUrl: string): string {
+  return String(comfyVendor(baseUrl)?.extra?.cookie || '').trim();
 }
 
 function unetFromModel(model: string): string | undefined {
@@ -90,15 +97,15 @@ function markJobError(promptId: string, message: string) {
   }
 }
 
-async function finalizeFromEntry(promptId: string, entry: any, baseUrl: string, apiKey: string): Promise<void> {
+async function finalizeFromEntry(promptId: string, entry: any, baseUrl: string, apiKey: string, cookie: string): Promise<void> {
   const existing = finalizing.get(promptId);
   if (existing) return existing;
-  const job = doFinalize(promptId, entry, baseUrl, apiKey).finally(() => finalizing.delete(promptId));
+  const job = doFinalize(promptId, entry, baseUrl, apiKey, cookie).finally(() => finalizing.delete(promptId));
   finalizing.set(promptId, job);
   return job;
 }
 
-async function doFinalize(promptId: string, entry: any, baseUrl: string, apiKey: string): Promise<void> {
+async function doFinalize(promptId: string, entry: any, baseUrl: string, apiKey: string, cookie: string): Promise<void> {
   const rows = listImagesByJob(promptId);
   const pending = rows.filter((row) => row.status === 'pending').sort((a, b) => a.n_index - b.n_index);
   if (pending.length === 0) return;
@@ -119,19 +126,19 @@ async function doFinalize(promptId: string, entry: any, baseUrl: string, apiKey:
       updateImage(pending[i].id, { status: 'error', error_message: 'ComfyUI 没有返回这一张' });
       continue;
     }
-    const buf = await fetchView(baseUrl, apiKey, file);
+    const buf = await fetchView(baseUrl, apiKey, file, cookie);
     const mime = /\.jpe?g$/i.test(file.filename) ? 'image/jpeg' : 'image/png';
     await finalizePendingImage(pending[i].id, buf, mime);
     mergeImageMeta(pending[i].id, { elapsed_ms: Date.now() - started });
   }
 }
 
-async function watch(promptId: string, baseUrl: string, apiKey: string, signal: AbortSignal) {
+async function watch(promptId: string, baseUrl: string, apiKey: string, cookie: string, signal: AbortSignal) {
   const deadline = Date.now() + DEADLINE_MS;
   while (!signal.aborted) {
-    const entry = await getHistoryEntry(baseUrl, apiKey, promptId);
+    const entry = await getHistoryEntry(baseUrl, apiKey, promptId, cookie);
     if (entry?.status?.completed) {
-      await finalizeFromEntry(promptId, entry, baseUrl, apiKey);
+      await finalizeFromEntry(promptId, entry, baseUrl, apiKey, cookie);
       return;
     }
     if (Date.now() > deadline) throw new ComfyError('ComfyUI 等待超时（10 分钟）', 504);
@@ -140,12 +147,12 @@ async function watch(promptId: string, baseUrl: string, apiKey: string, signal: 
   throw abortError();
 }
 
-function startWatch(promptId: string, baseUrl: string, apiKey: string) {
+function startWatch(promptId: string, baseUrl: string, apiKey: string, cookie: string) {
   const ac = new AbortController();
   inflight.set(promptId, ac);
   void (async () => {
     try {
-      await watch(promptId, baseUrl, apiKey, ac.signal);
+      await watch(promptId, baseUrl, apiKey, cookie, ac.signal);
     } catch (e: any) {
       const message = e?.name === 'AbortError' ? 'cancelled' : (e?.message || 'ComfyUI 失败');
       markJobError(promptId, message);
@@ -233,6 +240,7 @@ export async function submitComfyGenerate(opts: {
   const dims = snapSize(aspect, resolution);
   const extra = vendorExtra('image.generate');
   const apiKey = opts.backend.apiKey || apiKeyForComfy(baseUrl);
+  const cookie = cookieForComfy(baseUrl);
   let prepared: PreparedWorkflow;
   try {
     prepared = prepareGenerateWorkflow({
@@ -244,11 +252,12 @@ export async function submitComfyGenerate(opts: {
       seed: optionalInt(extra.seed),
       steps: optionalInt(extra.steps),
       unetName: unetFromModel(opts.backend.model),
+      model: opts.backend.model,
     });
   } catch (e) {
     throw asComfyError(e);
   }
-  const promptId = await submitPrompt(baseUrl, apiKey, prepared.graph);
+  const promptId = await submitPrompt(baseUrl, apiKey, prepared.graph, cookie);
   const images = pendingRows({
     promptId,
     prepared,
@@ -263,7 +272,7 @@ export async function submitComfyGenerate(opts: {
     width: dims.width,
     height: dims.height,
   });
-  startWatch(promptId, baseUrl, apiKey);
+  startWatch(promptId, baseUrl, apiKey, cookie);
   return { images };
 }
 
@@ -298,12 +307,13 @@ export async function submitComfyEdit(opts: {
     throw asComfyError(e);
   }
   const apiKey = opts.backend.apiKey || apiKeyForComfy(baseUrl);
+  const cookie = cookieForComfy(baseUrl);
   const { ext, mime } = fileExt(opts.source.mime || '', opts.source.file_path);
   const filename = `studio-${opts.source.id.slice(0, 8)}-${Date.now()}.${ext}`;
   let uploaded: string;
   try {
     const bytes = readFileSync(/* turbopackIgnore: true */ getImageFilePath(opts.source.file_path));
-    uploaded = await uploadImage(baseUrl, apiKey, bytes, filename, mime);
+    uploaded = await uploadImage(baseUrl, apiKey, bytes, filename, mime, cookie);
   } catch (e) {
     throw asComfyError(e);
   }
@@ -317,13 +327,20 @@ export async function submitComfyEdit(opts: {
       steps: optionalInt(extra.steps),
       unetName: unetFromModel(opts.backend.model),
     };
-    prepared = denoise == null
-      ? prepareEditWorkflow({ ...shared, resolution: side })
-      : prepareRedrawWorkflow({ ...shared, denoise });
+    if (comfyFamily(opts.backend.model) === 'anima') {
+      if (denoise == null) {
+        throw new ComfyError('Anima 没有 Qwen 的参考图节点，改图强度要大于 0', 400);
+      }
+      prepared = prepareRedrawWorkflow({ ...shared, denoise, model: opts.backend.model });
+    } else {
+      prepared = denoise == null
+        ? prepareEditWorkflow({ ...shared, resolution: side })
+        : prepareRedrawWorkflow({ ...shared, denoise, model: opts.backend.model });
+    }
   } catch (e) {
     throw asComfyError(e);
   }
-  const promptId = await submitPrompt(baseUrl, apiKey, prepared.graph);
+  const promptId = await submitPrompt(baseUrl, apiKey, prepared.graph, cookie);
   const aspect = opts.source.width && opts.source.height
     ? nearestAspect(opts.source.width, opts.source.height)
     : (opts.aspect_ratio || '1:1');
@@ -343,7 +360,7 @@ export async function submitComfyEdit(opts: {
     height: opts.source.height || side,
     denoise,
   });
-  startWatch(promptId, baseUrl, apiKey);
+  startWatch(promptId, baseUrl, apiKey, cookie);
   return { images };
 }
 
@@ -352,9 +369,9 @@ export async function reconcileComfyImage(img: ImageAsset): Promise<ImageAsset |
   const baseUrl = String(img.extra_json?.comfy_base_url || '');
   if (!baseUrl) return img;
   try {
-    const entry = await getHistoryEntry(baseUrl, apiKeyForComfy(baseUrl), img.job_id);
+    const entry = await getHistoryEntry(baseUrl, apiKeyForComfy(baseUrl), img.job_id, cookieForComfy(baseUrl));
     if (!entry?.status?.completed) return getImage(img.id) || img;
-    await finalizeFromEntry(img.job_id, entry, baseUrl, apiKeyForComfy(baseUrl));
+    await finalizeFromEntry(img.job_id, entry, baseUrl, apiKeyForComfy(baseUrl), cookieForComfy(baseUrl));
   } catch {
     return getImage(img.id) || img;
   }
@@ -366,6 +383,6 @@ export async function cancelComfyImage(img: ImageAsset): Promise<void> {
   if (promptId) inflight.get(promptId)?.abort();
   const baseUrl = String(img.extra_json?.comfy_base_url || '');
   if (promptId && baseUrl) {
-    await cancelQueuedPrompt(baseUrl, apiKeyForComfy(baseUrl), promptId);
+    await cancelQueuedPrompt(baseUrl, apiKeyForComfy(baseUrl), promptId, cookieForComfy(baseUrl));
   }
 }

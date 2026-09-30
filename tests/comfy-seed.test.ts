@@ -31,7 +31,7 @@ describe('COMFY_BASE_URL seed', () => {
     const first = await (await settingsApi.GET()).json();
     const comfy = first.vendors.find((v: any) => v.kind === 'comfyui');
     expect(comfy.base_url).toBe('http://comfy.example:8188/');
-    expect(comfy.models[0].model).toBe('qwen-image-2.1');
+    expect(comfy.models.map((m: any) => m.model).sort()).toEqual(['anima', 'qwen-image-2.1']);
     expect(first.bindings.find((b: any) => b.capability === 'image.generate')).toMatchObject({
       vendor_id: 'comfyui',
       model: 'qwen-image-2.1',
@@ -49,5 +49,24 @@ describe('COMFY_BASE_URL seed', () => {
     const again = second.vendors.find((v: any) => v.kind === 'comfyui');
     expect(again.base_url).toBe('http://comfy.example:8188/');
     expect(second.bindings.filter((b: any) => b.capability === 'image.generate')).toHaveLength(1);
+  });
+
+  it('puts qwen-image-2.1 and anima back without moving the bindings', async () => {
+    const vendors = await import('../app/lib/vendors');
+    const comfy = vendors.listVendors().find((v) => v.kind === 'comfyui')!;
+    vendors.upsertVendor({
+      id: comfy.id,
+      kind: 'comfyui',
+      label: comfy.label,
+      base_url: comfy.base_url,
+      api_key: comfy.api_key,
+      extra: comfy.extra,
+      models: [{ model: 'anima-turbo-v1.0.safetensors', capabilities: ['image.generate'] }],
+    });
+    const again = await (await settingsApi.GET()).json();
+    const models = again.vendors.find((v: any) => v.kind === 'comfyui').models.map((m: any) => m.model);
+    expect(models).toEqual(expect.arrayContaining(['qwen-image-2.1', 'anima', 'anima-turbo-v1.0.safetensors']));
+    expect(again.bindings.find((b: any) => b.capability === 'image.generate').model).toBe('qwen-image-2.1');
+    expect(again.bindings.find((b: any) => b.capability === 'image.edit').model).toBe('qwen-image-2.1');
   });
 });

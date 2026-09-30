@@ -16,10 +16,12 @@ export interface ComfyImageRef {
   type: string;
 }
 
-function authHeaders(apiKey: string, json = false): Record<string, string> {
+function authHeaders(apiKey: string, json = false, cookie = ''): Record<string, string> {
   const headers: Record<string, string> = {};
   if (json) headers['Content-Type'] = 'application/json';
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const raw = cookie.trim();
+  if (raw) headers.Cookie = raw;
   return headers;
 }
 
@@ -73,11 +75,11 @@ export function collectOutputImages(entry: any): ComfyImageRef[] {
   return images;
 }
 
-export async function comfyHealth(baseUrl: string, apiKey: string): Promise<{ ok: boolean; status: number; body: unknown }> {
+export async function comfyHealth(baseUrl: string, apiKey: string, cookie = ''): Promise<{ ok: boolean; status: number; body: unknown }> {
   const root = comfyRoot(baseUrl);
   if (!root) return { ok: false, status: 400, body: { error: 'ComfyUI 地址未配置' } };
   try {
-    const res = await fetch(`${root}/system_stats`, { headers: authHeaders(apiKey) });
+    const res = await fetch(`${root}/system_stats`, { headers: authHeaders(apiKey, false, cookie) });
     const body = await readJson(res);
     return { ok: res.ok, status: res.status, body };
   } catch (e: any) {
@@ -85,24 +87,31 @@ export async function comfyHealth(baseUrl: string, apiKey: string): Promise<{ ok
   }
 }
 
-export async function listUnets(baseUrl: string, apiKey: string): Promise<string[]> {
-  const root = rootOrThrow(baseUrl);
-  const res = await fetch(`${root}/models/unet`, { headers: authHeaders(apiKey) });
+async function readModelList(root: string, apiKey: string, folder: string, cookie: string): Promise<{ ok: boolean; status: number; ids: string[]; data: any }> {
+  const res = await fetch(`${root}/models/${folder}`, { headers: authHeaders(apiKey, false, cookie) });
   const data = await readJson(res);
-  if (!res.ok) {
-    throw new ComfyError(data?.error || `拉取 UNet 失败: ${res.status}`, 502, data);
-  }
-  if (Array.isArray(data)) return data.map((row) => String(row)).filter(Boolean);
-  return [];
+  const ids = Array.isArray(data) ? data.map((row) => String(row)).filter(Boolean) : [];
+  return { ok: res.ok, status: res.status, ids, data };
 }
 
-export async function submitPrompt(baseUrl: string, apiKey: string, graph: unknown): Promise<string> {
+/** ComfyUI 0.37 keeps diffusion weights under diffusion_models. Older builds still use unet. */
+export async function listUnets(baseUrl: string, apiKey: string, cookie = ''): Promise<{ ids: string[]; endpoint: string }> {
+  const root = rootOrThrow(baseUrl);
+  const diffusion = await readModelList(root, apiKey, 'diffusion_models', cookie);
+  if (diffusion.ok) return { ids: diffusion.ids, endpoint: `${root}/models/diffusion_models` };
+  const unet = await readModelList(root, apiKey, 'unet', cookie);
+  if (unet.ok) return { ids: unet.ids, endpoint: `${root}/models/unet` };
+  const failed = diffusion.status === 404 ? unet : diffusion;
+  throw new ComfyError(failed.data?.error || `拉取扩散模型失败: ${failed.status}`, 502, failed.data);
+}
+
+export async function submitPrompt(baseUrl: string, apiKey: string, graph: unknown, cookie = ''): Promise<string> {
   const root = rootOrThrow(baseUrl);
   let res: Response;
   try {
     res = await fetch(`${root}/prompt`, {
       method: 'POST',
-      headers: authHeaders(apiKey, true),
+      headers: authHeaders(apiKey, true, cookie),
       body: JSON.stringify({ prompt: graph, client_id: 'grok-studio' }),
     });
   } catch (e: any) {
@@ -119,28 +128,28 @@ export async function submitPrompt(baseUrl: string, apiKey: string, graph: unkno
   return String(data.prompt_id);
 }
 
-export async function getHistoryEntry(baseUrl: string, apiKey: string, promptId: string): Promise<any | null> {
+export async function getHistoryEntry(baseUrl: string, apiKey: string, promptId: string, cookie = ''): Promise<any | null> {
   const root = rootOrThrow(baseUrl);
-  const res = await fetch(`${root}/history/${encodeURIComponent(promptId)}`, { headers: authHeaders(apiKey) });
+  const res = await fetch(`${root}/history/${encodeURIComponent(promptId)}`, { headers: authHeaders(apiKey, false, cookie) });
   if (res.status === 404) return null;
   const data = await readJson(res);
   if (!res.ok) throw new ComfyError(data?.error || `读取 ComfyUI 历史失败: ${res.status}`, 502, data);
   return data?.[promptId] || null;
 }
 
-export async function fetchView(baseUrl: string, apiKey: string, image: ComfyImageRef): Promise<Buffer> {
+export async function fetchView(baseUrl: string, apiKey: string, image: ComfyImageRef, cookie = ''): Promise<Buffer> {
   const root = rootOrThrow(baseUrl);
   const q = new URLSearchParams({
     filename: image.filename,
     subfolder: image.subfolder,
     type: image.type,
   });
-  const res = await fetch(`${root}/view?${q}`, { headers: authHeaders(apiKey) });
+  const res = await fetch(`${root}/view?${q}`, { headers: authHeaders(apiKey, false, cookie) });
   if (!res.ok) throw new ComfyError(`下载图像失败: ${res.status}`, 502);
   return Buffer.from(await res.arrayBuffer());
 }
 
-export async function uploadImage(baseUrl: string, apiKey: string, bytes: Buffer, filename: string, mime: string): Promise<string> {
+export async function uploadImage(baseUrl: string, apiKey: string, bytes: Buffer, filename: string, mime: string, cookie = ''): Promise<string> {
   const root = rootOrThrow(baseUrl);
   const body = new FormData();
   body.set('image', new Blob([new Uint8Array(bytes)], { type: mime }), filename);
@@ -148,7 +157,7 @@ export async function uploadImage(baseUrl: string, apiKey: string, bytes: Buffer
   body.set('type', 'input');
   let res: Response;
   try {
-    res = await fetch(`${root}/upload/image`, { method: 'POST', headers: authHeaders(apiKey), body });
+    res = await fetch(`${root}/upload/image`, { method: 'POST', headers: authHeaders(apiKey, false, cookie), body });
   } catch (e: any) {
     throw new ComfyError(e?.message || `无法连接 ComfyUI（${root}）`, 502);
   }
@@ -167,18 +176,18 @@ export function runningPromptId(queue: any): string | null {
   return typeof item[1] === 'string' ? item[1] : null;
 }
 
-export async function cancelQueuedPrompt(baseUrl: string, apiKey: string, promptId: string): Promise<void> {
+export async function cancelQueuedPrompt(baseUrl: string, apiKey: string, promptId: string, cookie = ''): Promise<void> {
   const root = comfyRoot(baseUrl);
   if (!root || !promptId) return;
   await fetch(`${root}/queue`, {
     method: 'POST',
-    headers: authHeaders(apiKey, true),
+    headers: authHeaders(apiKey, true, cookie),
     body: JSON.stringify({ delete: [promptId] }),
   }).catch(() => undefined);
-  const res = await fetch(`${root}/queue`, { headers: authHeaders(apiKey) }).catch(() => null);
+  const res = await fetch(`${root}/queue`, { headers: authHeaders(apiKey, false, cookie) }).catch(() => null);
   if (!res?.ok) return;
   const queue = await res.json().catch(() => ({}));
   if (runningPromptId(queue) === promptId) {
-    await fetch(`${root}/interrupt`, { method: 'POST', headers: authHeaders(apiKey) }).catch(() => undefined);
+    await fetch(`${root}/interrupt`, { method: 'POST', headers: authHeaders(apiKey, false, cookie) }).catch(() => undefined);
   }
 }

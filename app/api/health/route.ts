@@ -3,6 +3,7 @@ import { resolveChatBackend, resolveImageGenerateBackend, resolveSpeechBackend, 
 import { assertChatConfigured, fetchChatCompletions } from '@/app/lib/providers/chat';
 import { jetsonHealth } from '@/app/lib/providers/jetson';
 import { comfyHealth } from '@/app/lib/providers/comfy/client';
+import { cookieForComfy } from '@/app/lib/providers/comfy/run';
 import { ttsHealth } from '@/app/lib/providers/tts';
 import { canonicalIntegrationId } from '@/app/lib/integrations/catalog';
 import { APP_NAME, APP_VERSION } from '@/app/lib/version';
@@ -66,7 +67,7 @@ export async function POST(req: Request) {
       if (!backend.baseUrl) {
         return NextResponse.json({ ok: false, error: 'ComfyUI 地址未配置' }, { status: 400 });
       }
-      const result = await comfyHealth(backend.baseUrl, backend.apiKey);
+      const result = await comfyHealth(backend.baseUrl, backend.apiKey, cookieForComfy(backend.baseUrl));
       return NextResponse.json({
         ok: result.ok,
         status: result.status,

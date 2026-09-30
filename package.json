@@ -1,6 +1,6 @@
 {
   "name": "grok-lite",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "scripts": {
     "dev": "next dev -H ::",
@@ -45,11 +45,5 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^5.0.1"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3",
-      "unrs-resolver"
-    ]
   }
 }

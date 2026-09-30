@@ -58,6 +58,7 @@ export async function listRemoteModels(opts: {
   kind: string;
   baseUrl: string;
   apiKey?: string;
+  cookie?: string;
 }): Promise<{ models: RemoteModel[]; endpoint: string; mode?: string; default_voice?: string }> {
   const kind = canonicalIntegrationId(opts.kind);
   const base = modelsBaseUrl(kind, opts.baseUrl);
@@ -69,10 +70,10 @@ export async function listRemoteModels(opts: {
   const headers = bearerHeaders(opts.apiKey || '');
   if (kind === 'comfyui') {
     try {
-      const ids = await listUnets(base, opts.apiKey || '');
+      const listed = await listUnets(base, opts.apiKey || '', opts.cookie || '');
       return {
-        endpoint: `${base}/models/unet`,
-        models: ids.map((id) => ({ id, suggested: guessModelCapabilities(kind, id) })),
+        endpoint: listed.endpoint,
+        models: listed.ids.map((id) => ({ id, suggested: guessModelCapabilities(kind, id) })),
       };
     } catch (e) {
       if (e instanceof ComfyError) {

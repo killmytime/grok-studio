@@ -1,0 +1,83 @@
+{
+  "1": {
+    "inputs": {
+      "clip_name": "qwen_3_06b_base.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": { "title": "加载CLIP" }
+  },
+  "2": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": { "title": "加载VAE" }
+  },
+  "3": {
+    "inputs": {
+      "text": "1girl",
+      "clip": ["1", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "CLIP文本编码" }
+  },
+  "4": {
+    "inputs": {
+      "text": "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia",
+      "clip": ["1", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "CLIP文本编码" }
+  },
+  "5": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": { "title": "空Latent图像" }
+  },
+  "6": {
+    "inputs": {
+      "seed": 0,
+      "steps": 32,
+      "cfg": 4,
+      "sampler_name": "euler",
+      "scheduler": "sgm_uniform",
+      "denoise": 1,
+      "model": ["9", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["5", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": { "title": "K采样器" }
+  },
+  "7": {
+    "inputs": {
+      "samples": ["6", 0],
+      "vae": ["2", 0]
+    },
+    "class_type": "VAEDecode",
+    "_meta": { "title": "VAE解码" }
+  },
+  "8": {
+    "inputs": {
+      "filename_prefix": "anima",
+      "images": ["7", 0]
+    },
+    "class_type": "SaveImage",
+    "_meta": { "title": "保存图像" }
+  },
+  "9": {
+    "inputs": {
+      "unet_name": "Anima-2.9B-preview-v1.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": { "title": "UNet加载器" }
+  }
+}

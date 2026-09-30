@@ -19,6 +19,8 @@ export interface IntegrationManifest {
   requiresApiKey: boolean;
   defaultModels: Partial<Record<Capability, string>>;
   extraFields?: IntegrationField[];
+  /** Models besides the one-per-capability defaults. ComfyUI keeps Qwen and Anima on one vendor. */
+  extraModels?: Array<{ model: string; capabilities: Capability[] }>;
   notes?: string;
 }
 
@@ -81,8 +83,8 @@ export const INTEGRATIONS: IntegrationManifest[] = [
   },
   {
     id: 'comfyui',
-    aliases: ['comfy', 'qwen-image'],
-    label: 'ComfyUI (Qwen Image 2.1)',
+    aliases: ['comfy', 'qwen-image', 'anima'],
+    label: 'ComfyUI (Qwen Image / Anima)',
     shortLabel: 'ComfyUI',
     capabilities: ['image.generate', 'image.edit'],
     requiresApiKey: false,
@@ -90,12 +92,16 @@ export const INTEGRATIONS: IntegrationManifest[] = [
       'image.generate': 'qwen-image-2.1',
       'image.edit': 'qwen-image-2.1',
     },
+    extraModels: [
+      { model: 'anima', capabilities: ['image.generate', 'image.edit'] },
+    ],
     extraFields: [
       { key: 'seed', label: 'Seed', hint: '空=每次随机', placeholder: '可选', advanced: true },
-      { key: 'steps', label: 'Steps', hint: '空=默认 20。简单站姿可以填 8', placeholder: '20', advanced: true },
-      { key: 'denoise', label: '重绘', hint: '改图条的默认强度。空着按 0.85。填 0 是参考图', placeholder: '0.85', advanced: true },
+      { key: 'steps', label: 'Steps', hint: '空着时 Qwen 生图 20、改图参考模式 25，Anima 32。简单站姿可以填 8', placeholder: '20', advanced: true },
+      { key: 'denoise', label: '重绘', hint: '改图条的默认强度。空着按 0.85。Qwen 填 0 是参考图；Anima 要大于 0', placeholder: '0.85', advanced: true },
+      { key: 'cookie', label: 'Cookie', hint: '需要校验时再填，直连留空', kind: 'password', placeholder: 'Name=value', advanced: true },
     ],
-    notes: 'Qwen Image 2.1。正向写完整句子。种子、步数、重绘在高级配置里。',
+    notes: 'Qwen Image 2.1 用完整句子。Anima 用 Danbooru 标签。模型名里带 anima 就走 Anima。种子、步数、重绘在高级配置里。',
   },
   {
     id: 'qwen3tts',

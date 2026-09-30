@@ -4,7 +4,7 @@ import { createServer, type Server } from 'http';
 import { join } from 'path';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { vi } from 'vitest';
-import { DEFAULT_NEGATIVE, prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow, resolveDenoise, comfyStrengthHint } from '../app/lib/providers/comfy/workflow';
+import { DEFAULT_NEGATIVE, comfyFamily, prepareEditWorkflow, prepareGenerateWorkflow, prepareRedrawWorkflow, resolveDenoise, comfyStrengthHint } from '../app/lib/providers/comfy/workflow';
 
 const TEST_DATA_DIR = join(process.cwd(), 'tests', '.tmp-comfy');
 process.env.DATA_DIR = TEST_DATA_DIR;
@@ -16,7 +16,7 @@ const TINY_PNG = Buffer.from(
   'base64'
 );
 
-type Hit = { method: string; url: string; body: any; raw: string };
+type Hit = { method: string; url: string; body: any; raw: string; cookie: string };
 
 function startComfy() {
   const hits: Hit[] = [];
@@ -32,16 +32,16 @@ function startComfy() {
       try { body = JSON.parse(raw); } catch { body = { raw }; }
     }
     const url = req.url || '';
-    hits.push({ method: req.method || '', url, body, raw });
+    hits.push({ method: req.method || '', url, body, raw, cookie: String(req.headers.cookie || '') });
 
     if (req.method === 'GET' && url.startsWith('/system_stats')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ system: { os: 'test' } }));
       return;
     }
-    if (req.method === 'GET' && url.startsWith('/models/unet')) {
+    if (req.method === 'GET' && (url.startsWith('/models/diffusion_models') || url.startsWith('/models/unet'))) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(['qwen_image_2.1_int8_convrot.safetensors']));
+      res.end(JSON.stringify(['qwen_image_2.1_int8_convrot.safetensors', 'Anima-2.9B-preview-v1.safetensors']));
       return;
     }
     if (req.method === 'POST' && url.startsWith('/upload/image')) {
@@ -157,7 +157,10 @@ describe('comfyui qwen image 2.1', () => {
       label: 'Qwen',
       base_url: server.url,
       extra: { seed: '11', steps: '8' },
-      models: [{ model: 'qwen-image-2.1', capabilities: ['image.generate', 'image.edit'] }],
+      models: [
+        { model: 'qwen-image-2.1', capabilities: ['image.generate', 'image.edit'] },
+        { model: 'anima', capabilities: ['image.generate', 'image.edit'] },
+      ],
     });
     vendors.setBinding('image.generate', vendor.id, 'qwen-image-2.1');
     vendors.setBinding('image.edit', vendor.id, 'qwen-image-2.1');
@@ -224,6 +227,12 @@ describe('comfyui qwen image 2.1', () => {
     expect(prepared.graph['70'].inputs.positive).toEqual(['81', 0]);
     expect(prepared.graph['70'].inputs.negative).toEqual(['81', 1]);
     expect(prepared.graph['66'].inputs.unet_name).toBe('qwen_image_2.1_int8_convrot.safetensors');
+    expect(prepared.graph['62'].inputs.type).toBe('qwen_image');
+    expect(prepared.graph['83'].class_type).toBe('QwenImage21Cache');
+    expect(prepared.graph['70'].inputs.model).toEqual(['83', 0]);
+    expect(prepared.graph['70'].inputs.sampler_name).toBe('euler');
+    expect(prepared.graph['70'].inputs.steps).toBe(25);
+    expect(prepared.graph['69']).toBeUndefined();
   });
 
   it('redraw keeps the source pixels and opens room for new clothes or objects', () => {
@@ -240,6 +249,56 @@ describe('comfyui qwen image 2.1', () => {
     expect(prepared.graph['70'].inputs.denoise).toBe(0.85);
     expect(prepared.graph['67'].inputs.text).toBe('a red coat');
     expect(prepared.graph['70'].inputs.steps).toBe(20);
+  });
+
+  it('builds the anima graph from the qwen image clip and an anima unet', () => {
+    expect(comfyFamily('anima')).toBe('anima');
+    expect(comfyFamily('anima-turbo-v1.0.safetensors')).toBe('anima');
+    expect(comfyFamily('qwen-image-2.1')).toBe('qwen');
+    const prepared = prepareGenerateWorkflow({
+      positive: '1girl, silver hair',
+      width: 832,
+      height: 1216,
+      batch: 1,
+      seed: 7,
+      model: 'anima',
+    });
+    expect(prepared.graph['1'].inputs).toMatchObject({
+      clip_name: 'qwen_3_06b_base.safetensors',
+      type: 'stable_diffusion',
+    });
+    expect(prepared.graph['2'].inputs.vae_name).toBe('qwen_image_vae.safetensors');
+    expect(prepared.graph['9'].inputs.unet_name).toBe('Anima-2.9B-preview-v1.safetensors');
+    expect(prepared.graph['3'].inputs.text).toBe('1girl, silver hair');
+    expect(prepared.graph['5'].inputs).toMatchObject({ width: 832, height: 1216, batch_size: 1 });
+    expect(prepared.graph['6'].inputs).toMatchObject({
+      seed: 7,
+      steps: 32,
+      cfg: 4,
+      sampler_name: 'euler',
+      scheduler: 'sgm_uniform',
+    });
+    expect(prepared.graph['6'].class_type).toBe('KSampler');
+    expect(Object.values(prepared.graph).some((node) => node.class_type === 'TextEncodeQwenImage21')).toBe(false);
+  });
+
+  it('redraws anima from the source image instead of the qwen reference encoder', () => {
+    const prepared = prepareRedrawWorkflow({
+      positive: '1girl, red coat',
+      imageName: 'uploaded.png',
+      denoise: 0.6,
+      seed: 4,
+      model: 'Anima-2.9B-preview-v1.safetensors',
+      unetName: 'Anima-2.9B-preview-v1.safetensors',
+    });
+    expect(prepared.graph['9'].inputs.unet_name).toBe('Anima-2.9B-preview-v1.safetensors');
+    expect(prepared.graph['80'].inputs.image).toBe('uploaded.png');
+    expect(prepared.graph['82'].inputs.vae).toEqual(['2', 0]);
+    expect(prepared.graph['6'].inputs.latent_image).toEqual(['82', 0]);
+    expect(prepared.graph['6'].inputs.denoise).toBe(0.6);
+    expect(prepared.graph['6'].inputs.steps).toBe(32);
+    expect(prepared.graph['6'].inputs.sampler_name).toBe('euler');
+    expect(prepared.graph['6'].inputs.scheduler).toBe('sgm_uniform');
   });
 
   it('maps an empty redraw strength to the recommended default', () => {
@@ -322,12 +381,64 @@ describe('comfyui qwen image 2.1', () => {
     const health = await comfyHealth(server.url, '');
     expect(health.ok).toBe(true);
     const listed = await listRemoteModels({ kind: 'comfyui', baseUrl: `${server.url}/v1` });
-    expect(listed.endpoint).toBe(`${server.url}/models/unet`);
+    expect(listed.endpoint).toBe(`${server.url}/models/diffusion_models`);
     expect(listed.models[0].id).toBe('qwen_image_2.1_int8_convrot.safetensors');
+    expect(listed.models[1].id).toBe('Anima-2.9B-preview-v1.safetensors');
+    const listedHit = server.hits.filter((hit) => hit.url.startsWith('/models/diffusion_models')).at(-1);
+    expect(listedHit?.cookie).toBe('');
+    await listRemoteModels({ kind: 'comfyui', baseUrl: server.url, cookie: 'session=abc' });
+    const withCookie = server.hits.filter((hit) => hit.url.startsWith('/models/diffusion_models')).at(-1);
+    expect(withCookie?.cookie).toBe('session=abc');
     expect(listed.models[0].suggested).toEqual(['image.generate', 'image.edit']);
     await cancelQueuedPrompt(server.url, '', 'not-running');
     expect(server.interrupts()).toBe(0);
     const queuePost = server.hits.filter((hit) => hit.method === 'POST' && hit.url.startsWith('/queue'));
     expect(queuePost.some((hit) => hit.body?.delete?.[0] === 'not-running')).toBe(true);
+  });
+
+  it('submits anima for generate and redraw, and refuses the qwen reference edit', async () => {
+    const comfy = vendors.listVendors().find((v: any) => v.kind === 'comfyui');
+    vendors.setBinding('image.generate', comfy.id, 'anima');
+    vendors.setBinding('image.edit', comfy.id, 'anima');
+    const conv = db.createConversation('anima');
+    const result = await generateImages({
+      prompt: '1girl, silver hair',
+      conversation_id: conv.id,
+      aspect_ratio: '1:1',
+      resolution: '1k',
+      n: 1,
+    });
+    const promptHits = server.hits.filter((hit) => hit.url.startsWith('/prompt'));
+    const genHit = promptHits[promptHits.length - 1];
+    expect(genHit.body.prompt['1'].inputs.type).toBe('stable_diffusion');
+    expect(genHit.body.prompt['9'].inputs.unet_name).toBe('Anima-2.9B-preview-v1.safetensors');
+    expect(genHit.body.prompt['6'].inputs.steps).toBe(8);
+    expect(genHit.body.prompt['3'].inputs.text).toBe('1girl, silver hair');
+    const done = await untilDone(db.getImage, [result.images[0].id]);
+    expect(done[0].status).toBe('completed');
+
+    const source = await saveImageFromBase64(TINY_PNG.toString('base64'), conv.id, 'orig', 'anima', '1:1', '1k');
+    await expect(editImages({
+      prompt: '1girl, red coat',
+      image_id: source.id,
+      conversation_id: conv.id,
+      denoise: 0,
+    })).rejects.toThrow(/Anima/);
+
+    const edited = await editImages({
+      prompt: '1girl, red coat',
+      image_id: source.id,
+      conversation_id: conv.id,
+      denoise: 0.6,
+    });
+    const editHit = server.hits.filter((hit) => hit.url.startsWith('/prompt')).at(-1)!;
+    expect(editHit.body.prompt['82'].class_type).toBe('VAEEncode');
+    expect(editHit.body.prompt['6'].inputs.denoise).toBe(0.6);
+    expect(editHit.body.prompt['6'].inputs.latent_image).toEqual(['82', 0]);
+    const editDone = await untilDone(db.getImage, [edited.images[0].id]);
+    expect(editDone[0].status).toBe('completed');
+
+    vendors.setBinding('image.generate', comfy.id, 'qwen-image-2.1');
+    vendors.setBinding('image.edit', comfy.id, 'qwen-image-2.1');
   });
 });

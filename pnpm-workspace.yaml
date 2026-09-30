@@ -1,3 +1,5 @@
 allowBuilds:
-  better-sqlite3: true
+  # Published package already ships prebuilds/*.node. pnpm would otherwise
+  # run `node-gyp rebuild` and fail where node-gyp is not installed.
+  better-sqlite3: false
   unrs-resolver: true
